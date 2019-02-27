@@ -20,7 +20,7 @@ data	an interface to iolite's C++ data. E.g. you can get
 IoLog	an interface to iolite's logging facility. You can add
         messages with, e.g., IoLog.debug('My message')
 
-drs		an interface to the PythoDRS C++ class in iolite from 
+drs		an interface to the PythonDRS C++ class in iolite from 
 		which some built-in features can be accessed, e.g.,
 		baselineSubtract(group, channels, mask)
 """
