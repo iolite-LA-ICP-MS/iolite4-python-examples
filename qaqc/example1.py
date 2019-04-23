@@ -30,7 +30,7 @@ from iolite.QtGui import QWidget, QLabel, QFormLayout, QLineEdit, QComboBox, QIm
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import pandas as pd
+#import pandas as pd
 import numpy as np
 from scipy.cluster.hierarchy import dendrogram, linkage  
 
@@ -57,47 +57,57 @@ def update():
 	
 	qaqc.clearReport()
 	qaqc.pushHtml('<h2>Example1</h2>')
-	qaqc.pushHtml('<p>This is what your specified: <b>%s</b>.</p>'%(settings['text']))
+	qaqc.pushHtml('<p>This is what your specified: <b>%s</b>.</p><br>'%(settings['text']))
 
 	channels = [i.name for i in data.timeSeriesList(TimeSeriesData.tsInput)]
 	d = [ [data.groupResult(g, data.timeSeries(c)).value() for c in channels] for g in data.selectionGroupList()]
 	datadict = {g.name: v for g, v in zip(data.selectionGroupList(),d)}
 
-	table = pd.DataFrame(datadict, index=channels)
-	pd.set_option('precision',3)
-	qaqc.pushHtml(table.to_html())
+	#table = pd.DataFrame(datadict, index=channels)
+	#pd.set_option('precision',3)
+	#qaqc.pushHtml(table.to_html())
 	plt.clf()
 	fig = plt.gcf()	
-	fig.set_size_inches(4, 3)
+	fig.set_size_inches(8, 6)
 	fig.set_dpi(120)
-	plt.plot(range(10))
+	#plt.plot(range(10))
 
-	fig.canvas.draw()
-	w, h = fig.canvas.get_width_height()
-	im = QImage(fig.canvas.buffer_rgba(), w, h, QImage.Format_ARGB32)	
-	qaqc.pushImage(im)
+	#fig.canvas.draw()
+	#w, h = fig.canvas.get_width_height()
+	#im = QImage(fig.canvas.buffer_rgba(), w, h, QImage.Format_ARGB32)	
+	#qaqc.pushImage(im)
 
 
 	# Try a dendogram
 	X = np.array([])
+	ls = []
 	for c in data.timeSeriesList(TimeSeriesData.tsInput):
 		print(c.name)
+		
 		if c.name == 'TotalBeam':
 			continue
+		ls += [c.name]
 		d = np.array([])
 		for s in data.selectionGroup(settings['text']).selections():
-			sd = data.result(s, c).value()
+			sd = c.dataForSelection(s)
+			#sd = data.result(s, c).value()
 			d = np.insert(d, 0, sd)
 
+		d = d/np.max(d)
+
 		if len(X) == 0:
-			X = [d]
+			X = d
 		else: 
-			print(len(X))
-			print(len(d))
-			X = np.append(X, d, axis=1)
+			print(X.shape)
+			print(d.shape)
+			X = np.column_stack((X, d))
 
-	linked = linkage(X, 'single')
-
+	linked = linkage(np.transpose(X), 'ward')
+	dendrogram(linked, labels=ls)
+	fig.canvas.draw()
+	w, h = fig.canvas.get_width_height()
+	im = QImage(fig.canvas.buffer_rgba(), w, h, QImage.Format_ARGB32)	
+	qaqc.pushImage(im)
 
 
 	qaqc.finished(qaqc.Success)
