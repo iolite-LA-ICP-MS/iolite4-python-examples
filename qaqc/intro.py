@@ -95,6 +95,7 @@ def update():
 	grmin, grmax = gr.value() - gr.uncertainty(), gr.value() + gr.uncertainty()
 	trmin, trmax = target-target_diff, target+target_diff
 	
+	# Check if the group result is within the target:
 	if grmin < trmax and grmax > trmin:
 		qaqc.finished(qaqc.Success)
 	else:

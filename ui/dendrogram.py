@@ -53,7 +53,7 @@ class DendrogramWidget(QWidget):
 		
 		plt.clf()
 		fig = plt.gcf()	
-		fig.set_size_inches(8, 6)
+		fig.set_size_inches(8, 8)
 		fig.set_dpi(120)
 
 		X = np.array([])
