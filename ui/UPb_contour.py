@@ -8,10 +8,10 @@
 from iolite.QtGui import QAction, QLabel, QSizePolicy, QWidget, QComboBox, QLabel, QToolButton
 from iolite.QtGui import QHBoxLayout, QVBoxLayout, QCheckBox, QImage, QPixmap, QFileDialog
 from iolite.QtGui import QDialog, QFormLayout, QDialogButtonBox, QLineEdit, QPushButton
-from iolite.QtCore import QDir
-#import matplotlib
-#matplotlib.use('Agg')
+from iolite.QtCore import QDir, Qt
+
 from matplotlib.backends.backend_qt5agg import FigureCanvas
+
 import pandas as pd
 import seaborn as sb
 import numpy as np
@@ -23,7 +23,7 @@ widget = None
 l238U = 1.55125*10**(-10)
 l235U = 9.8485*10**(-10)
 l232Th = 4.9475*10**(-11)
-U85r = 137.88
+U85r = 137.818
 
 class UPbContourWidget(QWidget):
     
@@ -73,6 +73,8 @@ class UPbContourWidget(QWidget):
 
     def update_plot(self):
         self.layout().removeWidget(self.plot)
+        self.plot.deleteLater()
+
         TW = self.tw_checkbox.checked
         group_name = self.group_combobox.currentText        
         print("UPb_contour: update_plot %s %s"%(group_name, TW))
@@ -201,10 +203,14 @@ class UPbContourWidget(QWidget):
 
 def create_widget():
     global widget
-    widget = UPbContourWidget()    
+    print(widget)
+    if widget is None:
+        widget = UPbContourWidget()    
+        widget.setAttribute(Qt.WA_DeleteOnClose)    
+    
     widget.show()
 
 def installUIHooks(window):   
     a = QAction('U-Pb Contour', window)
     a.triggered.connect(create_widget)
-    plugin.appendActionToMenu(["Tools", "Examples"], a)
+    ui.appendActionToMenu(["Tools", "Examples"], a)

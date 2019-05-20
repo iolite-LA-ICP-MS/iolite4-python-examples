@@ -1,5 +1,5 @@
 # A python-based UI module for iolite 4 starts with some metadata
-#/ Name: UI Plugin Example
+#/ Name: UI Introduction
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based UI plugin for iolite 4
 #/ References: None
@@ -20,7 +20,7 @@ data	an interface to iolite's C++ data. E.g. you can get
 IoLog	an interface to iolite's logging facility. You can add
         messages with, e.g., IoLog.debug('My message')
 
-plugin	an interface to the PythonUI C++ class in iolite from 
+ui		an interface to the PythonUI C++ class in iolite from 
 		which an action associated with this plugin can be 
 		added to the iolite interface either as a menu or 
 		sidebar item
@@ -38,9 +38,9 @@ def installUIHooks(window):
 	To make the plugin invokable from the user interface, you can
 	use one of the following:
 	
-	plugin.appendSidebarAction(action)
-	plugin.appendActionToMenu(menuStringList, action)
-	plugin.appendMenuToMenu(menuStringList, action)
+	ui.appendSidebarAction(action)
+	ui.appendActionToMenu(menuStringList, action)
+	ui.appendMenuToMenu(menuStringList, action)
 	
 	where the action is a QAction whose 'triggered' signal is connected
 	to something useful, e.g.,
@@ -53,8 +53,8 @@ def installUIHooks(window):
 	a message box summarizing the selections we've made.
 	"""
 	
-	action = QAction("Summarize selections", window)
-	plugin.appendActionToMenu(["Tools", "Examples"], action)
+	action = QAction("Summarize Selections", window)
+	ui.appendActionToMenu(["Tools", "Examples"], action)
 	action.triggered.connect(summarize)
 
 def summarize():

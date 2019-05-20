@@ -5,12 +5,14 @@
 #/ Version: 1.0
 #/ Contact: support@iolite-software.com
 
-from iolite.QtGui import QAction, QWidget, QComboBox, QLabel, QHBoxLayout, QVBoxLayout, QImage, QPixmap
+from iolite.QtGui import QAction, QWidget, QComboBox, QLabel, QHBoxLayout, QVBoxLayout, QImage, QPixmap, QSizePolicy
+from iolite.QtCore import Qt
 from iolite.TimeSeriesData import TimeSeriesData
 from iolite.SelectionGroup import SelectionGroup
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvas
 import numpy as np
 from scipy.cluster.hierarchy import dendrogram, linkage  
 
@@ -19,7 +21,7 @@ widget = None
 def installUIHooks(window):   
     a = QAction('Dendrogram', window)
     a.triggered.connect(create_widget)
-    plugin.appendActionToMenu(["Tools", "Examples"], a)
+    ui.appendActionToMenu(["Tools", "Examples"], a)
 
 class DendrogramWidget(QWidget):
 
@@ -41,13 +43,16 @@ class DendrogramWidget(QWidget):
 		header_layout.addWidget(self.group_combobox)
 	
 		self.layout().addLayout(header_layout)
-		self.image_widget = QLabel()
-		self.layout().addWidget(self.image_widget)
+		self.plot = QLabel("Select a group above...")
+		self.layout().addWidget(self.plot)
 		self.resize(600, 800)
 		self.setWindowTitle("Dendrogram Example")
 		self.show()
 
 	def update_dendrogram(self):
+		self.layout().removeWidget(self.plot)
+		self.plot.deleteLater()
+
 		group_name = self.group_combobox.currentText
 		print("dendrogram: update_dendrogram %s"%(group_name))
 		
@@ -69,25 +74,39 @@ class DendrogramWidget(QWidget):
 				selection_data = channel.dataForSelection(s)		
 				d = np.insert(d, 0, selection_data)
 
-			d = d/np.max(d)
+			try:
+				d = d/np.max(d)
+			except:
+				labels.pop()
+				print('Error processing channel %s'%(channel.name))
+				continue
 
 			if len(X) == 0:
 				X = d
 			else: 
 				X = np.column_stack((X, d))
 
-		linked = linkage(np.transpose(X), 'ward')
-		dendrogram(linked, labels=labels)
+		try:
+			linked = linkage(np.transpose(X), 'ward')
+			dendrogram(linked, labels=labels)
+		except RuntimeError as r:
+			print(r)
+			self.plot = QLabel('There was a problem processing the selected group.')
+			self.layout().addWidget(self.plot)
+			return
+
 		fig.canvas.draw()
-		w, h = fig.canvas.get_width_height()
-		im = QImage(fig.canvas.buffer_rgba(), w, h, QImage.Format_ARGB32)
-
-		self.image_widget.setPixmap(QPixmap.fromImage(im))
-
+		self.plot = FigureCanvas(fig)
+		self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+		self.layout().addWidget(self.plot)
 
 def create_widget():
 	print("dendrogram: create_widget")
 	global widget
-	widget = DendrogramWidget()
-	widget.show()
+	try:
+		widget.show()
+	except:	
+		widget = DendrogramWidget()
+		widget.setAttribute(Qt.WA_DeleteOnClose)
+		widget.show()
 	
