@@ -1,6 +1,6 @@
 # A python-based importer for iolite 4 starts with some metadata
-#/ Name: Fancy Importer
-#/ Authors: Joe Petrus
+#/ Name: Importer Introduction
+#/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based plugin for importing data into iolite 4
 #/ References: None
 #/ Version: 1.0
@@ -16,15 +16,15 @@ from iolite.QtCore import QRegularExpression
 Before the functions are called a few additional objects are
 added to the module
 
-data    an interface to iolite's C++ data. E.g. you can get
-        existing time series data or selection groups with it
-        as well as make new ones.
+data        an interface to iolite's C++ data. E.g. you can get
+            existing time series data or selection groups with it
+            as well as make new ones.
 
-IoLog   an interface to iolite's logging facility. You can add
-        messages with, e.g., IoLog.debug('My message')
+IoLog       an interface to iolite's logging facility. You can add
+            messages with, e.g., IoLog.debug('My message')
 
-plugin  an interface to the corresponding C++ class in iolite
-        from which some properties can be accessed, e.g. fileName
+importer    an interface to the corresponding C++ class in iolite
+            from which some properties can be accessed, e.g. fileName
 """
 
 def correct_format():
@@ -47,9 +47,9 @@ def correct_format():
 
     This method must return either True or False.
     """
-    IoLog.debug("correct_format called on file = %s"%(plugin.fileName))
+    IoLog.debug("correct_format called on file = %s"%(importer.fileName))
 
-    if plugin.fileName.endswith('ioe'):
+    if importer.fileName.endswith('ioe'):
         return True
 
     return False
@@ -62,14 +62,14 @@ def import_data():
     emitting the timeSeriesData signal.
 
     Note that emitting signals here simply means calling the corresponding
-    function, e.g. plugin.message('My message')
+    function, e.g. importer.message('My message')
 
     Importer progress can be updated via the 'message' and 'progress'
     signals. These will be displayed in the iolite interface.
 
     When finished, the 'finished' signal should be emitted.
     """
-    IoLog.debug("import_data called on file = %s"%(plugin.fileName))
+    IoLog.debug("import_data called on file = %s"%(importer.fileName))
 
 
     # Normally you would parse the file specified by plugin.fileName
@@ -82,8 +82,8 @@ def import_data():
 
     for i in range(10):
         # Update our task information
-        plugin.message('Now doing %i'%i) 
-        plugin.progress(i*10)
+        importer.message('Now doing %i'%i) 
+        importer.progress(i*10)
 
         # Sleep a bit so it doesn't happen too fast!
         # For demonstration purposes only...
@@ -96,6 +96,6 @@ def import_data():
         # enum, here data.Input
         data.createTimeSeries('Channel%i'%i, data.Input, t, d)
 
-    plugin.message('Finished')
-    plugin.progress(100)
-    plugin.finished()
+    importer.message('Finished')
+    importer.progress(100)
+    importer.finished()
