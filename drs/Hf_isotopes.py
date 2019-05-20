@@ -1,29 +1,9 @@
-# A python-based data reduction scheme for iolite 4 starts with some metadata:
-#/ Name: Hf isotopes example
+#/ Name: Hf Isotopes Example
 #/ Authors: Joe Petrus and Bence Paul
-#/ Description: This is an example python-based plugin for processing Hf data in iolite 4
+#/ Description: A Hf isotopes example
 #/ References: None
 #/ Version: 1.0
 #/ Contact: support@iolite-software.com
-
-"""
-Qt imports can be done through 'iolite', e.g.
-from iolite.QtGui import QLabel
-
-Before functions are called a few additional objects are
-added to the module:
-
-data	an interface to iolite's C++ data. E.g. you can get
-        existing time series data or selection groups with it
-        as well as make new ones.
-
-IoLog	an interface to iolite's logging facility. You can add
-        messages with, e.g., IoLog.debug('My message')
-
-drs		an interface to the PythonDRS C++ class in iolite from 
-		which some built-in features can be accessed, e.g.,
-		baselineSubtract(group, channels, mask)
-"""
 
 from iolite import QtGui
 from iolite.TimeSeriesData import TimeSeriesData
@@ -31,21 +11,6 @@ from iolite.SelectionGroup import SelectionGroup
 import numpy as np
 
 def runDRS():
-	"""
-	This method will be called by iolite when the user clicks 
-	Crunch Data in the DRS window or as part of a processing
-	template. It should transform 'input' data into 'output'
-	data using the provided settings.
-
-	DRS progress can be updated via the 'message' and 'progress'
-	signals. These will be displayed in the iolite interface.
-
-	When finished, the 'finished' signal should be emitted.
-
-	As an example, we will do baseline subtraction of all
-	input channels using a DRS helper function.
-
-	"""
 
 	drs.message("Starting Hf isotopes DRS...")
 	drs.progress(0)

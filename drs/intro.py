@@ -1,6 +1,6 @@
 # A python-based data reduction scheme for iolite 4 starts with some metadata
-#/ Name: Fancy Data Reduction Scheme
-#/ Authors: Albert Einstein
+#/ Name: Data Reduction Scheme Introduction
+#/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based plugin for processing data in iolite 4
 #/ References: None
 #/ Version: 1.0
@@ -85,7 +85,7 @@ def runDRS():
 	for counter, channel in enumerate(allInputChannels):
 		drs.message("Baseline subtracting %s" % channel.name())
 		drs.progress(25 + 75*counter/len(allInputChannels))
-		sleep(5)
+		sleep(5) # Sleeping only so that the progress can be observed
 
 		drs.baselineSubtract(data.selectionGroup("Baseline"), [allInputChannels[counter]], mask, 25, 100)
 
