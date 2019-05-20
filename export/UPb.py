@@ -1,3 +1,24 @@
+"""
+A python-based export script for iolite 4 has no expectations or functions
+that will be automatically run. It is simply evaulated when used as an export script.
+
+Before evaluating the script a few additional objects are added to the module:
+
+data	an interface to iolite's C++ data. E.g. you can get
+        existing time series data or selection groups with it
+        as well as make new ones. Importantly, you can get
+        results via data.result(selection, channel)
+
+IoLog	an interface to iolite's logging facility. You can add
+        messages with, e.g., IoLog.debug('My message')
+
+Using an export script you could, e.g., export data in a custom format and/or order, or
+write results to a remote database.
+
+As an example here, we'll write our results in the format of the plasmage.org data
+reporting template: http://www.plasmage.org/recommendations/home.html
+"""
+
 import numpy as np
 import pandas as pd
 from functools import partial
@@ -103,6 +124,5 @@ write_column(28, data_func = partial(channel_data, ChannelNames.Pb207_U235_age),
 write_column(31, data_func = partial(channel_data, ChannelNames.Pb208_Th232_age), uncert_types=[2,3])
 write_column(34, data_func = conc_pct)
 write_borders()
-write_footer(1, 'asdf')
 
 wb.save(export_filepath)
