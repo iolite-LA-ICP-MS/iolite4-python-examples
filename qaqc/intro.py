@@ -1,5 +1,5 @@
 # A python-based QA/QC module for iolite 4 starts with some metadata
-#/ Name: QA/QC Example
+#/ Name: QA/QC Introduction
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based plugin for QA/QC in iolite 4
 #/ References: None
@@ -33,18 +33,17 @@ from matplotlib.patches import Rectangle
 
 def update():
 	"""
-	This method will be called by iolite when the user clicks 
-	Crunch Data in the DRS window or as part of a processing
-	template. It should transform 'input' data into 'output'
-	data using the provided settings.
+	This method will be called by iolite when the user triggers
+	the module to run in the QA/QC UI or as part of a processing
+	template. It should analyze current results to evaluate whether
+	the instruments were performing as expected.
 
-	DRS progress can be updated via the 'message' and 'progress'
-	signals. These will be displayed in the iolite interface.
+	When finished, the 'finished' signal should be emitted with a status code,
+	e.g. qaqc.Success, qaqc.Error, qaqc.SuccessWithWarnings 
 
-	When finished, the 'finished' signal should be emitted.
-
-	As an example, we will do baseline subtraction of all
-	input channels using a DRS helper function.
+	As an example, we will compare the group stats of the specified
+	selection group and channel to a target value. If they're within
+	uncertainty, finish with success.
 
 	"""	
 
@@ -52,7 +51,7 @@ def update():
 	settings = qaqc.settings()
 	
 	qaqc.clearReport()
-	qaqc.pushHtml('<h2>QA/QC example</h2>')
+	qaqc.pushHtml('<h2>QA/QC Introduction</h2>')
 	qaqc.pushHtml('<p>These are the settings you supplied:<br>')
 	for key in settings:
 		qaqc.pushHtml('<b>%s</b>: %s<br>'%(key, settings[key]))
@@ -100,15 +99,6 @@ def update():
 		qaqc.finished(qaqc.Success)
 	else:
 		qaqc.finished(qaqc.Error)
-
-
-def run():
-	"""
-	This method will be called by iolite when the user triggers the
-	module from the QA/QC interface or as part of a processing template.
-	It should 
-	"""
-	print('run called')
 
 
 def settingsWidget():
