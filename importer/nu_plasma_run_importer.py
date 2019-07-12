@@ -107,10 +107,8 @@ def import_data():
 
     timestring = ",".join(match.groups())
     start_time = datetime.strptime(timestring, '%d,%m,%Y,%I,%M,%S,%p')
-
-    #IoLog.information("Datetime string AFTER CONVERSION is " + start_time.strftime('%Y-%m-%d %H:%M:%S'))
-
-    IoLog.information("TIMESTAMP is " + str(start_time.timestamp()))
+    start_time_in_s = start_time.timestamp()
+    IoLog.debug("Start time is: " + timestring)
 
     #look through file to find the first line of data, which in .run files
     # is preceded by a line with "Spare Text" written in it.
@@ -126,43 +124,38 @@ def import_data():
 
 
     '''
-        Nu Plasma .run files contain no header data, so the columns that appear depends on the nrf file used to collect the data.
+        Nu Plasma .run files contain no channel header data, so the columns that appear depends on the nrf file used to collect the data.
         You need to know what collector each column represents and give it a name below.
         This particular example is for loading Sr data (in particular, using our Laser_Sr.nrf format). We could write a check in our
         correct_format() function above to check that the nrf used is Laser_Sr.nrf
     '''
 
-    names_list = ['Sr88','Sr87','Sr86','Rb85','Sr84','CaAr83','CaAr82','m81','m80','m79','m78','m77','measurement','time','type_col']
+    names_list = ['m89','m88','m87','m86.5','m86','m85.5','m85','m84.5','m84','m83','m82','m81','measurement','time','type_col']
+    mass_list = [89.0, 88.0, 87.0, 86.5, 86.0, 85.5, 85.0, 84.5, 84.0, 83.0, 82.0, 81.0]
 
     df = pd.read_csv(importer.fileName, skiprows=first_line_of_data, header=None, names=names_list)
 
-    IoLog.information(str(df))
+    #add start time in seconds to time column:
+    df['time'] = df['time'].add(start_time_in_s)
+
+    for column, mass in zip(names_list, mass_list):
+        if column in ['measurement','time','type_col']:
+            continue
+        channel = data.createTimeSeries(column, data.Input, df['time'].values, df[column].values)
+        channel.setProperty("Mass", mass)
+        channel.setProperty("Units", "volts")
 
 
+    # Now calculate Total Beam:
+    data.calculateTotalBeam()
 
-    # Normally you would parse the file specified by plugin.fileName
-    # into some numpy arrays and then pass those to iolite. Rather
-    # than parse some data, for this example, we'll just generate
-    # some random data.
-
-    # num_points = 1000
-    # t = np.linspace(time.time(), time.time()+60*60, num=num_points)
+    # IoLog.debug("Start Time: " + start_time.strftime("%d,%m,%Y,%I,%M,%S,%p"))
+    # IoLog.debug("End Time: " + datetime.fromtimestamp(df['time'].iloc[-1]).strftime("%d,%m,%Y,%I,%M,%S,%p"))
+    # IoLog.debug("Import Time: " + datetime.now().strftime("%d,%m,%Y,%I,%M,%S,%p"))
+    # IoLog.debug("No Of Points: {}".format(len(df.index)))
+    # IoLog.debug("Mass list: " + ', '.join(names_list))
     #
-    # for i in range(10):
-    #     # Update our task information
-    #     importer.message('Now doing %i'%i)
-    #     importer.progress(i*10)
-    #
-    #     # Sleep a bit so it doesn't happen too fast!
-    #     # For demonstration purposes only...
-    #     time.sleep(1)
-    #
-    #     # Make some random data
-    #     d = np.random.randn(num_points)
-    #
-    #     # Note that the channel type is specified through an
-    #     # enum, here data.Input
-    #     data.createTimeSeries('Channel%i'%i, data.Input, t, d)
+    # importer.addImportedMassSpecFile(start_time, datetime.fromtimestamp(df['time'].iloc[-1]), importer.fileName, datetime.now(), len(df.index), ', '.join(names_list), "Nu Plasma")
 
     importer.message('Finished')
     importer.progress(100)
