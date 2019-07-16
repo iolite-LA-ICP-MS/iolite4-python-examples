@@ -6,6 +6,10 @@
 #/ Version: 1.0
 #/ Contact: support@iolite-software.com
 
+"""
+see intro.py for explanation of functions
+"""
+
 import time
 import numpy as np
 import pandas as pd
@@ -35,7 +39,14 @@ constants = {
  'NP080 IC1 DT': 20.0
  }
 
-
+# Can use these to get proper starting time for each measurement.
+total_time_per_measurement = 460.0
+offsets = {
+    'zero 1':   2.0,
+    'zero 2':   5.0,
+    'cycle 1':   8.0,
+    'cycle 2':  370.0
+}
 
 m_fileName = ""
 
@@ -46,25 +57,7 @@ def accepted_files():
     return ".txt"
 
 def correct_format():
-    """
-    This method will be called by iolite when the user selects a file
-    to import. Typically, it uses the provided name (stored in
-    plugin.fileName) and parses as much of it as necessary to determine
-    if this importer is appropriate to import the data. For example,
-    although X Series II and Agilent data are both comma separated
-    value files, they can be distinguished by the characteristic
-    formatting in each. In our implementation, distinguishing the
-    two is done with 'regular expressions' (QRegularExpression)
-    parsing of the first several lines of the file.
 
-    Keep in mind that there is nothing stopping you from just
-    returning True (thus supporting all files!) or simply checking
-    the file extension, but such generic checks can yield unexpected
-    results. You cannot be sure which order the various importer
-    plugins will be checked for compatibility.
-
-    This method must return either True or False.
-    """
     IoLog.debug("correct_format for U-Th importer called on file = %s"%(importer.fileName))
 
     if importer.fileName.endswith('txt'):
@@ -81,17 +74,7 @@ def correct_format():
 
 def import_data():
     """
-    This method uses the provided file name (stored in plugin.fileName),
-    parses its contents, and registers time series data with iolite by
-    emitting the timeSeriesData signal.
-
-    Note that emitting signals here simply means calling the corresponding
-    function, e.g. importer.message('My message')
-
-    Importer progress can be updated via the 'message' and 'progress'
-    signals. These will be displayed in the iolite interface.
-
-    When finished, the 'finished' signal should be emitted.
+    see intro.py for explanation of functions
     """
     IoLog.debug("import_data in U-Th importer called on file = %s"%(importer.fileName))
 
@@ -122,6 +105,34 @@ def import_data():
     else:
         sample_name = match_name.group(1).lstrip()
         IoLog.debug("Sample name: " + sample_name)
+
+    # Get all metadata as dictionary:
+    metadata = {}
+
+    def getMetadataFromRegex(label, regex, file_contents_str):
+        metadata[label] = re.search(regex, file_contents_str, re.MULTILINE).group(1)
+
+    regex_list = [
+        r"^\"Run File = (.*)\"$",
+        r"^\"Gains : \",(.*),$",
+        r"^\"Bucket efficiencys : \",(.*),$",
+        r"^\"Ion counting deadtimes : \",(.*),$",
+        r"\"High Voltage Settings\".*[\n\r]{2}(.*),"
+    ]
+
+    meta_label_list = [
+        'nrf file',
+        'gains',
+        'bucket efficiencies',
+        'ion counter deadtimes',
+        'high voltage settings'
+    ]
+
+    for label, regex in zip(meta_label_list, regex_list):
+        getMetadataFromRegex(label, regex, file_contents)
+
+    IoLog.debug(str(metadata))
+
 
     '''
         Nu Plasma data .txt files contain no channel header information, so the columns that appear depends on the nrf file used to collect the data.
