@@ -22,8 +22,15 @@ correct_format()
 import_data()
 
 These three functions will be called by iolite at import time.
-Other than that, you can add whatever you like to your importer.
+You can also add the following function to make selecting your files easier:
 
+accepted_files()
+
+This function should return a string with file extensions accepted by this
+importer, e.g. ".csv". Can also return a semi-colon separated list,
+e.g. ".csv;.dat").
+
+Other than that, you can add whatever you like to your importer.
 
 Qt imports can be done through 'iolite', e.g.
 from iolite.QtCore import QRegularExpression
@@ -47,6 +54,9 @@ m_fileName = ""
 def setFileName(fileName):
     m_fileName = fileName
 
+def accepted_files():
+    return ".run"
+
 
 def correct_format():
     """
@@ -68,13 +78,20 @@ def correct_format():
 
     This method must return either True or False.
     """
-    IoLog.debug("correct_format called on file = %s"%(importer.fileName))
+    IoLog.debug("correct_format for Nu Plasma Sr run file importer called on file = %s"%(importer.fileName))
 
     if importer.fileName.endswith('run'):
-        return True
+        IoLog.debug("Found a .run file: " + importer.fileName)
+
+        nrf_regex = r"Laser_Sr\.nrf"
+        with open(importer.fileName) as f:
+            match = re.search(nrf_regex, f.read(), re.MULTILINE)
+            if match:
+                return True
+            else:
+                IoLog.debug(".run file did not match the Sr nrf regex.")
 
     return False
-
 
 def import_data():
     """
