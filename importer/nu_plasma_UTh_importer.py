@@ -117,7 +117,11 @@ def import_data():
         r"^\"Gains : \",(.*),$",
         r"^\"Bucket efficiencys : \",(.*),$",
         r"^\"Ion counting deadtimes : \",(.*),$",
-        r"\"High Voltage Settings\".*[\n\r]{2}(.*),"
+        r"\"High Voltage Settings\".*[\n\r]{2}(.*),",
+        r"\"Deflector Settings\".*[\n\r]{2}(.*),",
+        r"\"Plasma Settings\".*[\n\r]{2}(.*)",
+        r"(\"X motor pos.*)",
+        r"(\"Pir 1.*)"
     ]
 
     meta_label_list = [
@@ -125,11 +129,20 @@ def import_data():
         'gains',
         'bucket efficiencies',
         'ion counter deadtimes',
-        'high voltage settings'
+        'high voltage settings',
+        'deflector settings',
+        'plasma settings',
+        'motor settings',
+        'vacuum settings'
     ]
+
+    # Note: have to handle IC settings separately as they are spread over several lines...
 
     for label, regex in zip(meta_label_list, regex_list):
         getMetadataFromRegex(label, regex, file_contents)
+
+    IC_settings_regex = r"\"Ion Counting Settings\"[\r\n]{2}([\w\" ,-\.]+)[\n\r]{2}([\w\" ,-\.]+)[\n\r]{2}([\w\" ,-\.]+)[\n\r]{2}([\w\" ,-\.]+)"
+    metadata["IC settings"] = list(re.search(IC_settings_regex, file_contents, re.MULTILINE).groups())
 
     IoLog.debug(str(metadata))
 
