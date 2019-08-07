@@ -40,12 +40,12 @@ constants = {
  }
 
 # Can use these to get proper starting time for each measurement.
-total_time_per_measurement = 460.0
+total_time_per_measurement = 35     #Based on 1 s each for zeros, 20 s Cycle 1, 5 s Cycle 2, and magnet settle time 2 s
 offsets = {
     'zero 1':   2.0,
     'zero 2':   5.0,
     'cycle 1':   8.0,
-    'cycle 2':  370.0
+    'cycle 2':  30
 }
 
 m_fileName = ""
