@@ -33,6 +33,8 @@ def runDRS():
 	drs.progress(25)
 
 	allInputChannels = data.timeSeriesList(data.Input)
+	
+	commonProps = {'DRS': drs.name()}
 
 	# Baseline subtract and calculate SQ concentrations for each channel
 	for counter, channel in enumerate(allInputChannels):
@@ -47,7 +49,7 @@ def runDRS():
 			channel_spline = data.spline(settings['External'], channel.name).data()
 			channel_cps = data.timeSeries(channel.name + "_CPS").data()
 			channel_ppm = channel_cps * channel_ppm_in_rm / channel_spline
-			data.createTimeSeries(channel.name + " ppm", data.Output, None, channel_ppm)
+			data.createTimeSeries(channel.name + " ppm", data.Output, None, channel_ppm, commonProps)
 		except KeyError:
 			print('Could not calculate SQ channel for %s'%(channel.name))
 
@@ -59,7 +61,7 @@ def runDRS():
 		channels_sum += data.timeSeries(channel).data()
 	
 	factor = (channels_sum/1e4)/settings['Value']
-	data.createTimeSeries("NormalizationFactor", data.Intermediate, None, factor)
+	data.createTimeSeries("NormalizationFactor", data.Intermediate, None, factor, commonProps)
 	
 	channels_to_adjust = [c for c in data.timeSeriesList(data.Output) if 'ppm' in c.name]
 	print(channels_to_adjust)
