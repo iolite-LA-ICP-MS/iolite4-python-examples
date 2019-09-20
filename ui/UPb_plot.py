@@ -1,3 +1,4 @@
+#/ Type: UI
 #/ Name: U-Pb Plot
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is a wrapper around UPbplot.py by Atsushi Noda
@@ -10,7 +11,6 @@ from iolite.QtGui import QDialog, QFormLayout, QLineEdit, QPushButton
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 from iolite.QtCore import Qt, QDir
 import matplotlib.pyplot as plt
-from iolite.SelectionGroup import SelectionGroup
 
 ############################################
 ## CODE FROM UPbplot.py by Atsushi Noda
@@ -2677,7 +2677,7 @@ class UPbplotWidget(QWidget):
 
         # Group name
         self.group_cb = QComboBox(self)
-        self.group_cb.addItems(data.selectionGroupNames(SelectionGroup.sgSample | SelectionGroup.sgReferenceMaterial))
+        self.group_cb.addItems(data.selectionGroupNames(data.Sample | data.ReferenceMaterial))
         self.group_cb.currentTextChanged.connect(self.update_plot)
         header_layout.addWidget(QLabel("Group:"))
         header_layout.addWidget(self.group_cb)

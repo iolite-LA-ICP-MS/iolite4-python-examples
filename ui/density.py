@@ -1,3 +1,4 @@
+#/ Type: UI
 #/ Name: Density Plot
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example that creates a density plot

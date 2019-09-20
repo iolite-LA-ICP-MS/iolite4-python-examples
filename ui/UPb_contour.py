@@ -1,3 +1,4 @@
+#/ Type: UI
 #/ Name: U-Pb Contour
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example that creates a contour plot of U-Pb data

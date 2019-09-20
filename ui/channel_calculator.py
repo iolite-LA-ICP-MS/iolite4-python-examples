@@ -1,3 +1,4 @@
+#/ Type: UI
 #/ Name: Channel Calculator
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example that lets you create a channel from existing channels
@@ -104,4 +105,4 @@ def calculate():
 		new_type = type_cb.currentData
 		new_channel = data.createTimeSeries(name_le.text, new_type, None, new_data)
 		new_channel.setProperty('Created by', 'Channel Calculator')
-		data.dataChanged()
+		data.dataChanged.emit()

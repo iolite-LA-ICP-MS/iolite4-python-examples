@@ -1,4 +1,5 @@
 # A python-based UI module for iolite 4 starts with some metadata
+#/ Type: UI
 #/ Name: UI Introduction
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based UI plugin for iolite 4

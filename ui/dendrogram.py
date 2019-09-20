@@ -1,3 +1,4 @@
+#/ Type: UI
 #/ Name: Dendrogram
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: Creates a dendrogram for the specified group using matplotlib/scipy
