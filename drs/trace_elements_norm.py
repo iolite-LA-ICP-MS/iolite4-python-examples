@@ -148,7 +148,7 @@ def runDRS():
 			print('Could not calculate SQ channel for %s'%(channel.name))
 
 	# Work out normalizing factor
-	channels_for_norm = [c + ' ppm' for c in settings['Elements']]
+	channels_for_norm = [c + '_ppm' for c in settings['Elements']]
 	channels_sum = np.zeros(len(indexChannel.data()))
 	use_oxides = settings['Oxides']
 	for channel in channels_for_norm:
@@ -214,7 +214,7 @@ def settingsWidget():
 			if matches:
 				matches[0].setSelected(True)
 		oxideCheckBox.setChecked(settings["Oxides"])
-		valueLineEdit.setText(str(settings["Value"]))
+		valueLineEdit.setText(str(float(settings["Value"])))
 	except KeyError:
 		pass
 
