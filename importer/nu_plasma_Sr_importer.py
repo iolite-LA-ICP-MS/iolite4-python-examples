@@ -1,6 +1,6 @@
 # A python-based importer for iolite 4 starts with some metadata
-#/ Name: NuPlasma Sr isotope importer
 #/ Type: Importer
+#/ Name: NuPlasma Sr isotope importer
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: An importer for loading Nu Plasma U-Th data files (not .run files)
 #/ References: None

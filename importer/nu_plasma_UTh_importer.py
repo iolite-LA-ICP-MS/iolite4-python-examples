@@ -1,4 +1,5 @@
 # A python-based importer for iolite 4 starts with some metadata
+#/ Type: Importer
 #/ Name: NuPlasma U-Th importer
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: An importer for loading Nu Plasma U-Th data files (not .run files)

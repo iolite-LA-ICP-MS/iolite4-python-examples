@@ -1,4 +1,5 @@
 # A python-based importer for iolite 4 starts with some metadata
+#/ Type: Importer
 #/ Name: Importer Introduction
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based plugin for importing data into iolite 4
