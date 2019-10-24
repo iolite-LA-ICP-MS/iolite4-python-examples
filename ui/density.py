@@ -168,7 +168,8 @@ def create_widget():
     widget.show()  
     
 
-def installUIHooks(window):   
-    a = QAction('Density Plot', window)
+def createUIElements():   
+    a = QAction('Density Plot', ui)
     a.triggered.connect(create_widget)
-    ui.appendActionToMenu(["Tools", "Examples"], a)
+    ui.setAction(a)
+    ui.setMenuName(['Examples'])
