@@ -67,7 +67,7 @@ def update():
 
 	plt.clf()
 	fig = plt.gcf()	
-	fig.set_size_inches(8, 6)
+	fig.set_size_inches(6, 4)
 	fig.set_dpi(120)
 	ax = fig.add_subplot(1, 1, 1)
 
