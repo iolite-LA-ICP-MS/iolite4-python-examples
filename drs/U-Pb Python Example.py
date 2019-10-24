@@ -114,9 +114,11 @@ def runDRS():
 
     def processRatio(ratio):
         print('Processing ratio: ' + ratio['name'])
-        ts = data.createTimeSeries(ratio['name'], data.Intermediate, indexChannel.time(), ratio['data'](), commonProps)
+        rawRatio = ratio['data']()
+        rawRatio[np.isinf(rawRatio)] = np.nan
+        ts = data.createTimeSeries(ratio['name'], data.Intermediate, indexChannel.time(), rawRatio, commonProps)
 
-        ratioToCalibrate = ratio['data']()
+        ratioToCalibrate = rawRatio
         ratioToCalibrateName = ratio['name']
 
         if ratio['dhfc']:
@@ -135,7 +137,7 @@ def runDRS():
                 DHFr = DHFr[:-endTrimIndex]
             
             params, cov = curve_fit(downholeFunc, DHFt, DHFr, ftol=1e-5)
-            dc = ratio['data']()/(1 + (params[1]/params[0])*beamSeconds + (params[2]/params[0])*np.exp(-params[3]*beamSeconds))
+            dc = rawRatio/(1 + (params[1]/params[0])*beamSeconds + (params[2]/params[0])*np.exp(-params[3]*beamSeconds))
             data.createTimeSeries('DC '+ratio['name'], data.Intermediate, indexChannel.time(), dc, commonProps)
 
             plot = Plot(settings['FitsWidget'])
