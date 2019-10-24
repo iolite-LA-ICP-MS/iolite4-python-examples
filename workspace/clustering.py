@@ -10,8 +10,9 @@ if not input_group_name:
 	raise RuntimeError('No group supplied -- abort!')
 
 group = data.selectionGroup(input_group_name)
-channel_names = ['Co59_ppm', 'Mn55_ppm', 'Zn66_ppm', 'Rb85_ppm']
+#channel_names = ['Co59_ppm', 'Mn55_ppm', 'Zn66_ppm', 'Rb85_ppm']
 #channel_names = data.timeSeriesNames(data.Output)
+channel_names = data.timeSeriesNames(data.Input)
 
 df = pd.DataFrame()
 
