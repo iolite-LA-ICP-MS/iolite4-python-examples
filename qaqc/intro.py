@@ -1,4 +1,5 @@
 # A python-based QA/QC module for iolite 4 starts with some metadata
+#/ Type: QAQC
 #/ Name: QA/QC Introduction
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based plugin for QA/QC in iolite 4

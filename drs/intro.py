@@ -1,4 +1,5 @@
 # A python-based data reduction scheme for iolite 4 starts with some metadata
+#/ Type: DRS
 #/ Name: Data Reduction Scheme Introduction
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: This is an example python-based plugin for processing data in iolite 4

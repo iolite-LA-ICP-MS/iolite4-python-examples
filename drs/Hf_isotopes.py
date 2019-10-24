@@ -1,3 +1,4 @@
+#/ Type: DRS
 #/ Name: Hf Isotopes Example
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: A Hf isotopes example

@@ -1,3 +1,4 @@
+#/ Type: QAQC
 #/ Name: Compare with iolite 3
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: Compares iolite 3 and 4 results
