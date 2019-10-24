@@ -27,7 +27,6 @@ drs		an interface to the PythonDRS C++ class in iolite from
 """
 
 from iolite import QtGui
-from iolite.TimeSeriesData import TimeSeriesData
 from time import sleep
 import numpy as np
 
@@ -62,8 +61,8 @@ def runDRS():
 	trim = settings["MaskTrim"]
 
 	# Create debug messages for the settings being used
-	IoLog.debug("indexChannelName = %s" % indexChannel.name())
-	IoLog.debug("maskChannelName = %s" % maskChannel.name())
+	IoLog.debug("indexChannelName = %s" % indexChannel.name)
+	IoLog.debug("maskChannelName = %s" % maskChannel.name)
 	IoLog.debug("maskCutoff = %f" % cutoff)
 	IoLog.debug("maskTrim = %f" % trim)
 
@@ -81,12 +80,12 @@ def runDRS():
 	drs.message("Interpolating onto index time and baseline subtracting...")
 	drs.progress(25)
 
-	allInputChannels = data.timeSeriesList(TimeSeriesData.tsInput)
+	allInputChannels = data.timeSeriesList(data.Input)
 
 	for counter, channel in enumerate(allInputChannels):
-		drs.message("Baseline subtracting %s" % channel.name())
+		drs.message("Baseline subtracting %s" % channel.name)
 		drs.progress(25 + 75*counter/len(allInputChannels))
-		sleep(5) # Sleeping only so that the progress can be observed
+		sleep(0.5) # Sleeping only so that the progress can be observed
 
 		drs.baselineSubtract(data.selectionGroup("Baseline"), [allInputChannels[counter]], mask, 25, 100)
 
@@ -107,25 +106,25 @@ def settingsWidget():
 	formLayout = QtGui.QFormLayout()
 	widget.setLayout(formLayout)
 
-	timeSeriesNames = data.timeSeriesNames(TimeSeriesData.tsInput)
+	timeSeriesNames = data.timeSeriesNames(data.Input)
 	defaultChannelName = ""
 	if timeSeriesNames:
 		defaultChannelName = timeSeriesNames[0]
 
-	drs.setDefaultSetting("IndexChannel", defaultChannelName)
-	drs.setDefaultSetting("MaskChannel", defaultChannelName)
-	drs.setDefaultSetting("MaskCutoff", 100000.0)
-	drs.setDefaultSetting("MaskTrim", 0.0)
+	drs.setSetting("IndexChannel", defaultChannelName)
+	drs.setSetting("MaskChannel", defaultChannelName)
+	drs.setSetting("MaskCutoff", 100000.0)
+	drs.setSetting("MaskTrim", 0.0)
 
 	settings = drs.settings()
 
 	indexComboBox = QtGui.QComboBox(widget)
-	indexComboBox.addItems(data.timeSeriesNames(TimeSeriesData.tsInput))
+	indexComboBox.addItems(data.timeSeriesNames(data.Input))
 	indexComboBox.setCurrentText(settings["IndexChannel"])
 	indexComboBox.currentTextChanged.connect(lambda t: drs.setSetting("IndexChannel", t))
 
 	maskComboBox = QtGui.QComboBox(widget)
-	maskComboBox.addItems(data.timeSeriesNames(TimeSeriesData.tsInput))
+	maskComboBox.addItems(data.timeSeriesNames(data.Input))
 	maskComboBox.setCurrentText(settings["MaskChannel"])
 	maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
 
