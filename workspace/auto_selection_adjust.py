@@ -1,15 +1,18 @@
 from iolite.QtGui import QInputDialog
 from iolite.QtCore import QDateTime
-from sklearn.cluster import MeanShift, DBSCAN, OPTICS, SpectralClustering
+#from sklearn.cluster import MeanShift, DBSCAN, OPTICS, SpectralClustering
+from sklearn.cluster import MeanShift, DBSCAN, SpectralClustering
 from sklearn import preprocessing
 import pandas as pd
 import numpy as np
 
-# Run length encoding from stack overflow :) 
+from iolite import BoolResult
+
+# Run length encoding from stack overflow :)
 def rle(inarray):
 	ia = np.asarray(inarray)
 	n = len(ia)
-	if n == 0: 
+	if n == 0:
 		return (None, None, None)
 	else:
 		y = np.array(ia[1:] != ia[:-1])     # pairwise unequal (string safe)
@@ -18,21 +21,26 @@ def rle(inarray):
 		p = np.cumsum(np.append(0, z))[:-1] # positions
 		return(z, p, ia[i])
 
-input_group_name = QInputDialog.getItem(None, "Auto Selection Adjuster", "Group:", data.selectionGroupNames(), 0, False)
+okObj = BoolResult()
+
+input_group_name = QInputDialog.getItem(None, "Auto Selection Adjuster", "Group:", data.selectionGroupNames(), 0, False, okObj)
+
+if not okObj:
+	raise RuntimeError('user cancelled -- abort!')
 
 if not input_group_name:
 	raise RuntimeError('No group supplied -- abort!')
 
 group = data.selectionGroup(input_group_name)
-output_group = data.createSelectionGroup(input_group_name + '_auto_adj', group.type)
+output_group = data.createSelectionGroup(input_group_name + '_auto_adj_cl', group.type)
 
 # Specify which channels to use for the clustering:
-channel_names = ['Si29_ppm', 'Mg24_ppm', 'Al27_ppm', 'Fe57_ppm']
+channel_names = ['Si29_ppm', 'Mg24_ppm', 'Al27_ppm', 'Fe57_ppm', 'Sr88_ppm', 'Zr90_ppm']
 #channel_names = data.timeSeriesNames(data.Output)
 
-for selection in group.selections():	
+for selection in group.selections():
 	# Create a data frame of the selection's data for channels specified above:
-	d = {}    
+	d = {}
 	for channel_name in channel_names:
 		d[channel_name] = data.timeSeries(channel_name).dataForSelection(selection)
 	df = pd.DataFrame(d)
@@ -46,17 +54,20 @@ for selection in group.selections():
 	cc = MeanShift()
 	clustering = cc.fit(df)
 	n_clusters = len(np.unique(clustering.labels_))
+	
+	print("Number of clusters for {0} is: {1}".format(selection.name, n_clusters))
+	print(selection.name)
 
 	# Calculate longest stretches of same label
 	z, p, _ = rle(clustering.labels_)
 	max_rl = np.amax(z)
 	start_index = p[np.argmax(z)]
 
-    t = data.timeSeries(channel_names[0]).timeForSelection(selection)
+	t = data.timeSeries(channel_names[0]).timeForSelection(selection)
 
-    start_ms = int(1000*(t[start_index]))
-    delta = np.median(np.diff(t))
-    end_ms =  start_ms + max_rl * delta * 1000
-    new_s = data.createSelection(output_group, QDateTime.fromMSecsSinceEpoch(start_ms), QDateTime.fromMSecsSinceEpoch(end_ms), selection.name)
+	start_ms = int(1000*(t[start_index]))
+	delta = np.median(np.diff(t))
+	end_ms =  start_ms + max_rl * delta * 1000
+	new_s = data.createSelection(output_group, QDateTime.fromMSecsSinceEpoch(start_ms), QDateTime.fromMSecsSinceEpoch(end_ms), selection.name)
 
 print('Done!')
