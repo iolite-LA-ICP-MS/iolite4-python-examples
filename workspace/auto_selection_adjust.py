@@ -1,3 +1,5 @@
+# Note: depending on the number of channels and selections, this can take quite a while!
+
 from iolite.QtGui import QInputDialog
 from iolite.QtCore import QDateTime
 #from sklearn.cluster import MeanShift, DBSCAN, OPTICS, SpectralClustering
@@ -35,8 +37,9 @@ group = data.selectionGroup(input_group_name)
 output_group = data.createSelectionGroup(input_group_name + '_auto_adj_cl', group.type)
 
 # Specify which channels to use for the clustering:
-channel_names = ['Si29_ppm', 'Mg24_ppm', 'Al27_ppm', 'Fe57_ppm', 'Sr88_ppm', 'Zr90_ppm']
+#channel_names = ['Si29_ppm', 'Mg24_ppm', 'Al27_ppm', 'Fe57_ppm']
 #channel_names = data.timeSeriesNames(data.Output)
+channel_names = data.timeSeriesNames(data.Input)
 
 for selection in group.selections():
 	# Create a data frame of the selection's data for channels specified above:

@@ -63,10 +63,12 @@ class AutoCompleteEdit(QLineEdit):
 		self._completer.setCompletionPrefix(completionPrefix)
 		self._completer.popup().setCurrentIndex(self._completer.completionModel().index(0,0))
 
-def installUIHooks(window):
-	action = QAction("Channel Calculator", window)
-	ui.appendActionToMenu(["Tools", "Examples"], action)
+def createUIElements():
+	action = QAction("Channel Calculator", ui)
 	action.triggered.connect(calculate)
+	ui.setAction(action)
+	ui.setMenuName(['Examples'])
+		
 
 def calculate():
 

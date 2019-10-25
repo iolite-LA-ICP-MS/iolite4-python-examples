@@ -30,7 +30,7 @@ ui		an interface to the PythonUI C++ class in iolite from
 from iolite.QtGui import QAction, QMessageBox
 import numpy as np
 
-def installUIHooks(window):
+def createUIElements():
 	"""
 	This is the only method that must be defined in a python UI plugin.
 	It will be automatically called to make the plugin available in the
@@ -39,14 +39,21 @@ def installUIHooks(window):
 	To make the plugin invokable from the user interface, you can
 	use one of the following:
 	
-	ui.appendSidebarAction(action)
-	ui.appendActionToMenu(menuStringList, action)
-	ui.appendMenuToMenu(menuStringList, action)
-	
+	For a menu item:
+	ui.setAction(action)
+	ui.setMenuName(list_of_menu_names)
 	where the action is a QAction whose 'triggered' signal is connected
 	to something useful, e.g.,
 	action = QAction("Action name", window)
 	action.triggered.connect(slot)		
+
+	For a side bar item:
+	ui.setAction(action)
+	ui.setWidget(widget)
+
+	For a dock item:
+	ui.setAction(action)
+	ui.setDock(dock)
 	"""
 
 	"""
@@ -54,13 +61,15 @@ def installUIHooks(window):
 	a message box summarizing the selections we've made.
 	"""
 	
-	action = QAction("Summarize Selections", window)
-	ui.appendActionToMenu(["Tools", "Examples"], action)
+	action = QAction("Summarize Selections", ui)
 	action.triggered.connect(summarize)
+	ui.setMenuName(['Examples'])
+	ui.setAction(action)
+	
 
 def summarize():
 
-	msg = ""
+	msg = "<h2>Summary:</h2>"
 
 	for sg in data.selectionGroupList():
 		durations = np.array([s.duration for s in sg.selections()])/1000

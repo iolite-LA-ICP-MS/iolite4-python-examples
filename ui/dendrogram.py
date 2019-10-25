@@ -8,8 +8,6 @@
 
 from iolite.QtGui import QAction, QWidget, QComboBox, QLabel, QHBoxLayout, QVBoxLayout, QImage, QPixmap, QSizePolicy
 from iolite.QtCore import Qt
-from iolite.TimeSeriesData import TimeSeriesData
-from iolite.SelectionGroup import SelectionGroup
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -19,14 +17,16 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 
 widget = None
 
-def installUIHooks(window):   
-    a = QAction('Dendrogram', window)
-    a.triggered.connect(create_widget)
-    ui.appendActionToMenu(["Tools", "Examples"], a)
+def createUIElements():   
+	a = QAction('Dendrogram', ui)
+	a.triggered.connect(create_widget)
+	ui.setAction(a)
+	ui.setMenuName(['Examples'])
+
 
 class DendrogramWidget(QWidget):
 
-	channel_type = TimeSeriesData.tsInput
+	channel_type = data.Input
 	image_widget = None
 	group_combobox = None
 

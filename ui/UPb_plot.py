@@ -3558,8 +3558,8 @@ def create_upb_plot():
         widget.show()    
 
 
-def installUIHooks(window):   
-    a = QAction('U-Pb Plot', window)
+def createUIElements():   
+    a = QAction('U-Pb Plot', ui)
     a.triggered.connect(create_upb_plot)
-    ui.appendActionToMenu(["Tools", "Examples"], a)
-    
+    ui.setAction(a)
+    ui.setMenuName(['Examples'])    

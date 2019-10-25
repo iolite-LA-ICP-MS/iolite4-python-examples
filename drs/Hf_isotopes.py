@@ -1,3 +1,4 @@
+#/ Type: DRS
 #/ Name: Hf Isotopes Example
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: A Hf isotopes example
@@ -6,8 +7,6 @@
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
-from iolite.TimeSeriesData import TimeSeriesData
-from iolite.SelectionGroup import SelectionGroup
 import numpy as np
 
 def runDRS():
@@ -50,7 +49,7 @@ def runDRS():
 	drs.message("Interpolating onto index time and baseline subtracting...")
 	drs.progress(25)
 
-	allInputChannels = data.timeSeriesList(TimeSeriesData.tsInput)
+	allInputChannels = data.timeSeriesList(data.Input)
 
 	for counter, channel in enumerate(allInputChannels):
 		drs.message("Baseline subtracting %s" % channel.name)
@@ -106,7 +105,7 @@ def runDRS():
 	#StdCorr_Hf178_177= (Hf178_177)* StdValue_Hf178_177 / StdSpline_Hf178_177
 
 	if propErrors:
-		groups = [s for s in data.selectionGroupList() if s.type != SelectionGroup.sgBaseline]
+		groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
 		data.propagateErrors(groups, [data.timeSeries("StdCorr_Hf176_177")], data.timeSeries("Hf176_177_Corr"), rmName)
 
 
@@ -127,23 +126,23 @@ def settingsWidget():
 	formLayout = QtGui.QFormLayout()
 	widget.setLayout(formLayout)
 
-	timeSeriesNames = data.timeSeriesNames(TimeSeriesData.tsInput)
+	timeSeriesNames = data.timeSeriesNames(data.Input)
 	defaultChannelName = ""
 	if timeSeriesNames:
 		defaultChannelName = timeSeriesNames[0]
 
-	rmNames = data.selectionGroupNames(SelectionGroup.sgReferenceMaterial)
+	rmNames = data.selectionGroupNames(data.ReferenceMaterial)
 
-	drs.setDefaultSetting("IndexChannel", defaultChannelName)
-	drs.setDefaultSetting("ReferenceMaterial", "Z_Plesovice")
-	drs.setDefaultSetting("MaskChannel", defaultChannelName)
-	drs.setDefaultSetting("MaskCutoff", 0.1)
-	drs.setDefaultSetting("MaskTrim", 0.0)
-	drs.setDefaultSetting("HfTrue", 0.7325)
-	drs.setDefaultSetting("Yb31", 1.132685)
-	drs.setDefaultSetting("Yb63", 0.796218)
-	drs.setDefaultSetting("Age", 0)
-	drs.setDefaultSetting("PropagateError", False)
+	drs.setSetting("IndexChannel", defaultChannelName)
+	drs.setSetting("ReferenceMaterial", "Z_Plesovice")
+	drs.setSetting("MaskChannel", defaultChannelName)
+	drs.setSetting("MaskCutoff", 0.1)
+	drs.setSetting("MaskTrim", 0.0)
+	drs.setSetting("HfTrue", 0.7325)
+	drs.setSetting("Yb31", 1.132685)
+	drs.setSetting("Yb63", 0.796218)
+	drs.setSetting("Age", 0)
+	drs.setSetting("PropagateError", False)
 
 	settings = drs.settings()
 
@@ -160,7 +159,7 @@ def settingsWidget():
 	formLayout.addRow("Reference material", rmComboBox)    
 
 	maskComboBox = QtGui.QComboBox(widget)
-	maskComboBox.addItems(data.timeSeriesNames(TimeSeriesData.tsInput))
+	maskComboBox.addItems(data.timeSeriesNames(data.Input))
 	maskComboBox.setCurrentText(settings["MaskChannel"])
 	maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
 	formLayout.addRow("Mask channel", maskComboBox)
