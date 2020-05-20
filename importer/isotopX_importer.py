@@ -54,7 +54,6 @@ def import_data():
         IoLog.error("Couldn't find a match for the date time stamp")
         importer.message('Error during import')
         importer.progress(100)
-        importer.finished()
         return
 
     timestring = match_time.group(1)
@@ -138,4 +137,3 @@ def import_data():
 
     importer.message('Finished')
     importer.progress(100)
-    importer.finished()
