@@ -19,8 +19,9 @@ def runDRS():
 	print(settings)
 
 	indexChannel = data.timeSeries(settings["IndexChannel"])
-	maskChannel = data.timeSeries(settings["MaskChannel"])
 	rmName = settings["ReferenceMaterial"]
+	maskOption = settings["Mask"]
+	maskChannel = data.timeSeries(settings["MaskChannel"])
 	cutoff = settings["MaskCutoff"]
 	trim = settings["MaskTrim"]
 	# Lambda87 = settings["Lambda87"]
@@ -31,6 +32,7 @@ def runDRS():
 
 	# Create debug messages for the settings being used
 	IoLog.debug("indexChannelName = %s" % indexChannel.name)
+	IoLog.debug("Masking data  = True" if maskOption else "Masking data  = False")
 	IoLog.debug("maskChannelName = %s" % maskChannel.name)
 	IoLog.debug("maskCutoff = %f" % cutoff)
 	IoLog.debug("maskTrim = %f" % trim)
@@ -38,7 +40,7 @@ def runDRS():
 	#IoLog.debug("Age = %f" % Age)
 	IoLog.debug("RbBias = %f" % RbBias)
 	IoLog.debug("CaArBias = %f" % CaArBias)
-	IoLog.debug("PropagateError = %f" % propErrors)
+	IoLog.debug("PropagateErrors = True" if propErrors else "PropagateErrors = False")
 
 	# Setup index time
 	drs.message("Setting up index time...")
@@ -46,9 +48,15 @@ def runDRS():
 	drs.setIndexChannel(indexChannel)
 
 	# Setup the mask
-	drs.message("Making mask...")
-	drs.progress(10)
-	mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
+	if maskOption:
+		drs.message("Making mask...")
+		drs.progress(10)
+		mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
+		data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
+	else:
+		mask = np.ones_like(indexChannel.data())
+		data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
+
 
 	# Interp onto index time and baseline subtract
 	drs.message("Interpolating onto index time and baseline subtracting...")
@@ -75,13 +83,18 @@ def runDRS():
 	drs.message("Subtracting interferences...")
 	drs.progress(40)
 
-	SrCaAr88 = data.timeSeriesList(data.Input, {'Mass': '88'})[0].data()
+	SrCaAr88 = data.timeSeriesList(data.Intermediate, {'Mass': '88'})[0].data()
+	SrCaAr86 = data.timeSeriesList(data.Intermediate, {'Mass': '86'})[0].data()
+
 	SrCaAr86 = data.timeSeriesList(data.Input, {'Mass': '86'})[0].data()
-	SrRb87 = data.timeSeriesList(data.Input, {'Mass': '87'})[0].data()
-	Rb85 = data.timeSeriesList(data.Input, {'Mass': '85'})[0].data()
-	SrCaAr84 = data.timeSeriesList(data.Input, {'Mass': '84'})[0].data()
-	CaAr83 = data.timeSeriesList(data.Input, {'Mass': '83'})[0].data()
-	CaAr82 = data.timeSeriesList(data.Input, {'Mass': '82'})[0].data()
+
+	Sr86channel = data.timeSeriesList(data.Input, {'Mass': '86'})[0]
+
+	SrRb87 = data.timeSeriesList(data.Intermediate, {'Mass': '87'})[0].data()
+	Rb85 = data.timeSeriesList(data.Intermediate, {'Mass': '85'})[0].data()
+	SrCaAr84 = data.timeSeriesList(data.Intermediate, {'Mass': '84'})[0].data()
+	CaAr83 = data.timeSeriesList(data.Intermediate, {'Mass': '83'})[0].data()
+	CaAr82 = data.timeSeriesList(data.Intermediate, {'Mass': '82'})[0].data()
 
 	PFract = (np.log(8.37520938 / (SrCaAr88/SrCaAr86))) / (np.log(87.9056/85.9093))*mask
 	PSrCaAr86 = SrCaAr86 - (CaAr82 * .004 / .647) / np.power((85.9160721 / 81.9210049), PFract)
@@ -107,35 +120,36 @@ def runDRS():
 	Rb87asPPM = (Rb87 / SrRb87) * 1000000 * mask
 	CaAr84asPPM = (Ca84 / SrCaAr84) * 100000 * mask
 	TotalSrBeam = Sr88 + Sr84 + Sr86 + Sr87 * mask
-	inRun8283_Ratio = CaAr82 / CaAr83	* mask	#This is a measure of REE vs. CaAr contributions. if pure CaAr = 4.9. If pure REE it's not entirely predictable, based on solution analysis of Indian perovsite = 3.6, Indian WR = 2.4.
+	inRun8283_Ratio = CaAr82 / CaAr83	* mask	#This is a measure of REE vs. CaAr contributions. If pure CaAr = 4.9. If pure REE it's not entirely predictable, based on solution analysis of Indian perovsite = 3.6, Indian WR = 2.4.
 
 	#Gather up intermediate channels and add them as time series:
-	int_channels = [PFract, PSrCaAr86, PSrCaAr88, Fract, RbFract, Rb87, Sr87, CaArFract, Ca84, Sr84, Sr88, Sr86, Sr8786_Uncorr, Sr8786_Corr, Rb87Sr86ratio, Sr8486_Uncorr, Sr8486_Corr, Rb87asPPM, CaAr84asPPM, TotalSrBeam, inRun8283_Ratio]
 	int_channel_names = ['PFract', 'PSrCaAr86', 'PSrCaAr88', 'Fract', 'RbFract', 'Rb87', 'Sr87', 'CaArFract', 'Ca84', 'Sr84', 'Sr88', 'Sr86', 'Rb87asPPM', 'CaAr84asPPM', 'inRun8283_Ratio']
-
+	int_channels = [PFract, PSrCaAr86, PSrCaAr88, Fract, RbFract, Rb87, Sr87, CaArFract, Ca84, Sr84, Sr88, Sr86, Rb87asPPM, CaAr84asPPM, inRun8283_Ratio]
 	for name, channel in zip(int_channel_names, int_channels):
+		data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
 
-
-
-	data.createTimeSeries("Sr87_86_Corr", data.Output, indexChannel.time(), Sr8786_Corr)
-	data.createTimeSeries("Sr84_86_Corr", data.Output, indexChannel.time(), Sr8486_Corr)
+	output_channels_names = ['TotalSrBeam', 'Sr8786_Uncorr', 'Sr8786_Corr', 'Rb87Sr86ratio', 'Sr8486_Uncorr', 'Sr8486_Corr']
+	output_channels = [TotalSrBeam, Sr8786_Uncorr, Sr8786_Corr, Rb87Sr86ratio, Sr8486_Uncorr, Sr8486_Corr]
+	for name, channel in zip(output_channels_names, output_channels):
+		data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
 
 	drs.message("Correcting ratios...")
 	drs.progress(80)
 
-	StdSpline_Sr87_86 = data.spline(rmName, "Sr87_86_Corr").data()
+	StdSpline_Sr87_86 = data.spline(rmName, "Sr8786_Corr").data()
 	StdValue_Sr87_86 = data.referenceMaterialData(rmName)["87Sr_86Sr"].value()
 
 	print("StdSpline_Sr87_86 mean = %f"%StdSpline_Sr87_86.mean())
 	print("StdValue_Sr87_86 = %f"%StdValue_Sr87_86)
 
 	StdCorr_Sr87_86 = (Sr8786_Corr) * StdValue_Sr87_86 / StdSpline_Sr87_86
-
-	data.createTimeSeries("StdCorr_Sr87_86", data.Output, indexChannel.time(), StdCorr_Sr87_86)
-
+	data.createTimeSeries('StdCorr_Sr87_86', data.Output, indexChannel.time(), StdCorr_Sr87_86)
 
 
 	if propErrors:
+		drs.message("Propagating errors...")
+		drs.progress(90)
+
 		groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
 		data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86")], data.timeSeries("Sr8786_Corr"), rmName)
 
@@ -166,6 +180,7 @@ def settingsWidget():
 
 	drs.setSetting("IndexChannel", defaultChannelName)
 	drs.setSetting("ReferenceMaterial", "C_MMC")
+	drs.setSetting("Mask", False)
 	drs.setSetting("MaskChannel", defaultChannelName)
 	drs.setSetting("MaskCutoff", 0.1)
 	drs.setSetting("MaskTrim", 0.0)
@@ -189,6 +204,14 @@ def settingsWidget():
 	rmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
 	formLayout.addRow("Reference material", rmComboBox)
 
+	verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
+	formLayout.addItem(verticalSpacer)
+
+	maskCheckBox = QtGui.QCheckBox(widget)
+	maskCheckBox.setChecked(settings["Mask"])
+	maskCheckBox.toggled.connect(lambda t: drs.setSetting("Mask", bool(t)))
+	formLayout.addRow("Mask", maskCheckBox)
+
 	maskComboBox = QtGui.QComboBox(widget)
 	maskComboBox.addItems(data.timeSeriesNames(data.Input))
 	maskComboBox.setCurrentText(settings["MaskChannel"])
@@ -204,6 +227,9 @@ def settingsWidget():
 	maskTrimLineEdit.setText(settings["MaskTrim"])
 	maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
 	formLayout.addRow("Mask trim", maskTrimLineEdit)
+
+	verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
+	formLayout.addItem(verticalSpacer2)
 
 	# lambda87LineEdit = QtGui.QLineEdit(widget)
 	# lambda87LineEdit.setText(settings["Lambda87"])
@@ -228,6 +254,6 @@ def settingsWidget():
 	propCheckBox = QtGui.QCheckBox(widget)
 	propCheckBox.setChecked(settings["PropagateError"])
 	propCheckBox.toggled.connect(lambda t: drs.setSetting("PropagateError", bool(t)))
-	formLayout.addRow("PropagateError", propCheckBox)
+	formLayout.addRow("Propagate Errors?", propCheckBox)
 
 	drs.setSettingsWidget(widget)
