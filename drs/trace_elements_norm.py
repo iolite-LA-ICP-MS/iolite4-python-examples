@@ -231,7 +231,7 @@ def settingsWidget():
 		oxideCheckBox.setChecked(settings["Oxides"])
 		valueLineEdit.setText(str(float(settings["Value"])))
 		maskComboBox.setCurrentText(settings["MaskChannel"])
-		maskLineEdit.setText(str(falot(settings["MaskValue"])))
+		maskLineEdit.setText(str(float(settings["MaskValue"])))
 	except KeyError:
 		pass
 
