@@ -68,8 +68,8 @@ def channel_data(channel_name, selection):
         return ('#N/A', '#N/A', '#N/A', '#N/A')
 
     try:
-        u1s_pct = 0.5*100*result.uncertainty()/result.value()
-        u2s_abs = result.uncertainty()
+        u1s_pct = 0.5*100*result.uncertaintyAs2SE()/result.value()
+        u2s_abs = result.uncertaintyAs2SE()
         pu2s_abs = result.propagatedUncertainty()
         return (result.value(), u1s_pct, u2s_abs, pu2s_abs)
     except ZeroDivisionError:
@@ -77,7 +77,10 @@ def channel_data(channel_name, selection):
 
 
 def selection_data(property_name, selection):
-    return (selection.property(property_name),)
+    value = selection.property(property_name)
+    if not value:
+        value = selection.group().name
+    return (value,)
 
 
 def associated_data(result_name, selection):
@@ -90,6 +93,52 @@ def th_u_ratio(selection):
     except:
         return('#N/A',)
 
+def pb206_204(selection):
+    try:
+        Pb206 = data.timeSeries('Pb206_CPS').dataForSelection(selection)
+        Pb204 = data.timeSeries('Pb204_CPS').dataForSelection(selection)
+        ratio = Pb206/Pb204
+        mean_ratio = np.nanmean(ratio)
+        pct1se = 100*(np.nanstd(ratio)/np.sqrt(len(ratio)))/mean_ratio
+        return (np.nanmean(ratio), pct1se)
+    except Exception as e:
+        print(e)
+        return ('#N/A', '#N/A')
+        
+def pb208_206(selection):
+    try:
+        Pb208 = data.timeSeries('Pb208_CPS').dataForSelection(selection)
+        Pb206 = data.timeSeries('Pb206_CPS').dataForSelection(selection)
+        ratio = Pb208/Pb206
+        mean_ratio = np.nanmean(ratio)
+        pct1se = 100*(np.nanstd(ratio)/np.sqrt(len(ratio)))/mean_ratio
+        return (np.nanmean(ratio), pct1se)
+    except Exception as e:
+        print(e)
+        return ('#N/A', '#N/A')
+
+def f206c(selection):
+    '''
+    From Horstwood et al. (2016)
+    f206c = (64model/64meas)*100
+    where
+    64model = 206/204 from Pb evolution model at uncorrected 7/6 age
+    64meas = 206/204 measured in sample
+    '''
+    try:
+        c64 = lambda a: 0.023*(a/1e3)**3 - 0.359*(a/1e3)**2 - 1.008*(a/1e3) + 19.04
+
+        age76 = data.timeSeries('Final Pb207/Pb206 age').dataForSelection(selection)
+        Pb206 = data.timeSeries('Pb206_CPS').dataForSelection(selection)
+        Pb204 = data.timeSeries('Pb204_CPS').dataForSelection(selection)
+        r64 = Pb206/Pb204
+        
+        f206c = 100*c64(age76)/r64
+        mean_f206c = np.nanmean(f206c)
+        return (mean_f206c,)
+    except Exception as e:
+        print(e)
+        return ('#N/A',)
 
 def conc_pct(selection):
     try:
@@ -186,10 +235,10 @@ def set_number_formats():
             for cell in row:
                 cell.number_format = format
 
-    for col in [4,5,6,22,23,24,25,26,27,28,29,30]:
+    for col in [4,5,22,23,24,25,26,27,28,29,30]:
         set_fmt('0', col)
 
-    for col in [10,16,18,34]:
+    for col in [6,10,16,18,34]:
         set_fmt('0.0', col)
 
     for col in [9,12,19]:
@@ -204,14 +253,14 @@ def set_number_formats():
 write_header()
 write_column(1, data_func = partial(selection_data, 'Name'))
 write_column(2, data_func = partial(selection_data, 'Comment'))
-write_column(3) # f206c
+write_column(3, data_func = f206c)
 write_column(4, data_func = partial(channel_data, ChannelNames.Pb206_cps))
 write_column(5, data_func = partial(channel_data, ChannelNames.Uppm))
 write_column(6, data_func = th_u_ratio)
-write_column(7, data_func = partial(channel_data, ChannelNames.Pb206_Pb204), uncert_types=[1])
+write_column(7, data_func = pb206_204, uncert_types=[1])
 write_column(9, data_func = partial(channel_data, ChannelNames.U238_Pb206), uncert_types=[1])
 write_column(11, data_func = partial(channel_data, ChannelNames.Pb207_Pb206), uncert_types=[1])
-write_column(13, data_func = partial(channel_data, ChannelNames.Pb208_Pb206), uncert_types=[1])
+write_column(13, data_func = pb208_206, uncert_types=[1])
 write_column(15, data_func = partial(channel_data, ChannelNames.Pb207_U235), uncert_types=[1])
 write_column(17, data_func = partial(channel_data, ChannelNames.Pb206_U238), uncert_types=[1])
 write_column(19, data_func = partial(associated_data, ChannelNames.Wetherill_rho))
