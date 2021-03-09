@@ -200,7 +200,11 @@ def settingsWidget():
 
 	rmComboBox = QtGui.QComboBox(widget)
 	rmComboBox.addItems(rmNames)
-	rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+	if settings["ReferenceMaterial"] in rmNames:
+		rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+	else:
+		rmComboBox.setCurrentText(rmNames[0])
+		drs.setSetting("ReferenceMaterial", rmNames[0])
 	rmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
 	formLayout.addRow("Reference material", rmComboBox)
 
