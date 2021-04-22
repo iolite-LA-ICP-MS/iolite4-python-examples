@@ -43,22 +43,22 @@ sel_grp_list = data.selectionGroupList(data.ReferenceMaterial) + data.selectionG
 sels = [s for sg in sel_grp_list for s in sg.selections()]
 
 class ChannelNames:
-        Pb206_cps = 'Pb206_CPS'
-        Uppm = 'Approx_U_PPM'
-        Th_U = 'Th/U'
-        Pb206_Pb204 = 'Final Pb206/Pb204'
-        Pb206_U238 = 'Final Pb206/U238'
-        Pb206_U238_age = 'Final Pb206/U238 age'
-        Pb207_U235 = 'Final Pb207/U235'
-        Pb207_U235_age = 'Final Pb207/U235 age'
-        Pb208_Pb206 = 'Final Pb208/Pb206'
-        U238_Pb206 = 'Final U238/Pb206'
-        Pb207_Pb206 = 'Final Pb207/Pb206'
-        Pb207_Pb206_age = 'Final Pb207/Pb206 age'
-        Wetherill_rho = 'rho 206Pb/238U v 207Pb/235U'
-        TW_rho = 'rho 207Pb/206Pb v 238U/206Pb'
-        Pb208_Th232 = 'Final Pb208/Th232'
-        Pb208_Th232_age = 'Final Pb208/Th232 age'
+    Pb206_cps = data.timeSeriesNames(data.Intermediate, {'Mass': 206, 'DRSType': 'BaselineSubtracted'})[0]
+    Uppm = 'Approx_U_PPM'
+    Th_U = 'Th/U'
+    Pb206_Pb204 = 'Final Pb206/Pb204'
+    Pb206_U238 = 'Final Pb206/U238'
+    Pb206_U238_age = 'Final Pb206/U238 age'
+    Pb207_U235 = 'Final Pb207/U235'
+    Pb207_U235_age = 'Final Pb207/U235 age'
+    Pb208_Pb206 = 'Final Pb208/Pb206'
+    U238_Pb206 = 'Final U238/Pb206'
+    Pb207_Pb206 = 'Final Pb207/Pb206'
+    Pb207_Pb206_age = 'Final Pb207/Pb206 age'
+    Wetherill_rho = 'rho 206Pb/238U v 207Pb/235U'
+    TW_rho = 'rho 207Pb/206Pb v 238U/206Pb'
+    Pb208_Th232 = 'Final Pb208/Th232'
+    Pb208_Th232_age = 'Final Pb208/Th232 age'
 
 
 def channel_data(channel_name, selection):
@@ -95,8 +95,8 @@ def th_u_ratio(selection):
 
 def pb206_204(selection):
     try:
-        Pb206 = data.timeSeries('Pb206_CPS').dataForSelection(selection)
-        Pb204 = data.timeSeries('Pb204_CPS').dataForSelection(selection)
+        Pb206 = data.timeSeriesList(data.Intermediate, {'Mass': 206, 'DRSType': 'BaselineSubtracted'})[0].dataForSelection(selection)
+        Pb204 = data.timeSeriesList(data.Intermediate, {'Mass': 204, 'DRSType': 'BaselineSubtracted'})[0].dataForSelection(selection)
         ratio = Pb206/Pb204
         mean_ratio = np.nanmean(ratio)
         pct1se = 100*(np.nanstd(ratio)/np.sqrt(len(ratio)))/mean_ratio
@@ -107,8 +107,8 @@ def pb206_204(selection):
         
 def pb208_206(selection):
     try:
-        Pb208 = data.timeSeries('Pb208_CPS').dataForSelection(selection)
-        Pb206 = data.timeSeries('Pb206_CPS').dataForSelection(selection)
+        Pb208 = data.timeSeriesList(data.Intermediate, {'Mass': 208, 'DRSType': 'BaselineSubtracted'})[0].dataForSelection(selection)
+        Pb206 = data.timeSeriesList(data.Intermediate, {'Mass': 206, 'DRSType': 'BaselineSubtracted'})[0].dataForSelection(selection)        
         ratio = Pb208/Pb206
         mean_ratio = np.nanmean(ratio)
         pct1se = 100*(np.nanstd(ratio)/np.sqrt(len(ratio)))/mean_ratio
@@ -129,8 +129,8 @@ def f206c(selection):
         c64 = lambda a: 0.023*(a/1e3)**3 - 0.359*(a/1e3)**2 - 1.008*(a/1e3) + 19.04
 
         age76 = data.timeSeries('Final Pb207/Pb206 age').dataForSelection(selection)
-        Pb206 = data.timeSeries('Pb206_CPS').dataForSelection(selection)
-        Pb204 = data.timeSeries('Pb204_CPS').dataForSelection(selection)
+        Pb206 = data.timeSeriesList(data.Intermediate, {'Mass': 206, 'DRSType': 'BaselineSubtracted'})[0].dataForSelection(selection)
+        Pb204 = data.timeSeriesList(data.Intermediate, {'Mass': 204, 'DRSType': 'BaselineSubtracted'})[0].dataForSelection(selection)
         r64 = Pb206/Pb204
         
         f206c = 100*c64(age76)/r64
