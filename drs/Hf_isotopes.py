@@ -89,6 +89,9 @@ def runDRS():
 
 	data.createTimeSeries("Hf176_177_Corr", data.Output, indexChannel.time(), Hf176_177_Corr)
 	data.createTimeSeries("Hf178_177", data.Output, indexChannel.time(), Hf178_177)
+
+        #Adding Lu176/177 ratio here
+	data.createTimeSeries("Lu176_Hf177_Corr", data.Output, indexChannel.time(), Lu176_Hf177_Corr)
 	
 	StdSpline_Hf176_177 = data.spline(rmName, "Hf176_177_Corr").data()
 	StdValue_Hf176_177 = data.referenceMaterialData(rmName)["176Hf/177Hf"].value()
