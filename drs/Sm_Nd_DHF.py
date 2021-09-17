@@ -2,6 +2,7 @@
 #/ Name: Sm-Nd Isotopes with Downhole fractionation correction 
 #/ Authors: Vitor Barrote, Chris Fisher and Joe Petrus
 #/ Description: Sm-Nd I4 version of the I3 DRS created by Chris Fisher and Chad Paton
+#/ DOI: 10.5281/zenodo.5512126
 #/ References: Fisher et al. 2020
 #/ Version: 1.0
 #/ Contact: vitorbarrote@hotmail.com
