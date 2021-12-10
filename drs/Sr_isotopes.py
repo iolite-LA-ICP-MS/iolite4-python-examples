@@ -208,7 +208,7 @@ def settingsWidget():
 	rmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
 	formLayout.addRow("Reference material", rmComboBox)
 
-	verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
+	verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
 	formLayout.addItem(verticalSpacer)
 
 	maskCheckBox = QtGui.QCheckBox(widget)
@@ -232,7 +232,7 @@ def settingsWidget():
 	maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
 	formLayout.addRow("Mask trim", maskTrimLineEdit)
 
-	verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
+	verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
 	formLayout.addItem(verticalSpacer2)
 
 	# lambda87LineEdit = QtGui.QLineEdit(widget)
