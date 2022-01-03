@@ -3,11 +3,125 @@
 #/ Authors: Bence Paul, Joe Petrus and author(s) of Sr_isotopes_Total_NIGL.ipf
 #/ Description: A Sr isotopes DRS that corrects for REE and CaAr interferences
 #/ References: None
-#/ Version: 1.0
+#/ Version: 2.0
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
+from iolite import QtCore
+from iolite.Qt import Qt, QColor
+from iolite.ui import CommonUIPyInterface as CUI
+from iolite.ui import IolitePlotPyInterface as Plot
+from iolite.ui import IolitePlotSettingsDialog as PlotSettings
+from iolite.QtGui import QAction
+from iolite.types import Result
+
+from scipy.optimize import curve_fit
 import numpy as np
+import itertools
+from functools import partial
+
+
+'''
+A plot to handle plotting of CaPO correction
+If this is the first time the DRS script has been run (e.g.
+when you first click on the DRS in iolite) the plot will be
+initiated.
+It also adds a Settings menu item to the context menu
+'''
+def showSettings():
+    d = PlotSettings(PLOT)
+    d.exec_()
+
+try:
+    PLOT
+except:
+    PLOT = Plot()
+    PLOT.setAttribute(Qt.WA_DeleteOnClose)
+    PLOT.setFixedSize(500,400)
+
+    def showSettings():
+        d = PlotSettings(PLOT)
+        d.exec_()
+
+    settingsAction = QAction(PLOT.contextMenu())
+    settingsAction.setText('Settings')
+    settingsAction.triggered.connect(showSettings)
+    PLOT.contextMenu().addAction(settingsAction)
+
+
+'''
+A menu to handle which Reference Materials (RMs) to use in the CaPO correction
+'''
+class ReferenceMaterialsMenu(QtGui.QMenu):
+
+    rmsChanged = QtCore.Signal(list)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.rmsForCaPOCorrection = []
+
+        for rm in data.referenceMaterialNames():
+            a = QtGui.QWidgetAction(self)
+            cb = QtGui.QCheckBox(rm, self)
+            cb.setStyleSheet('QCheckBox { padding-left: 5px; margin: 3px; }')
+            a.setDefaultWidget(cb)
+            self.addAction(a)
+            cb.clicked.connect(partial(self.updateChannels, rm))
+
+        self.aboutToShow.connect(self.updateMenu)
+
+    def updateMenu(self):
+         for a in self.actions():
+            cb = a.defaultWidget()
+            cb.setChecked(False)
+            try:
+                if cb.text in self.rmsForCaPOCorrection:
+                    cb.setChecked(True)
+            except Exception as e:
+                print(e)
+
+    def updateChannels(self, rmName, b):
+        if b:
+            self.rmsForCaPOCorrection = list(set(self.rmsForCaPOCorrection + [rmName]))
+        else:
+            self.rmsForCaPOCorrection = list(filter(lambda rm: rm != rmName, self.rmsForCaPOCorrection))
+
+        self.rmsChanged.emit(self.rmsForCaPOCorrection)
+
+'''
+Defining the colors to use in the CaPO plot here. By default only has 5 colors:
+'''
+PLOT_COLORS = [
+    QColor(239, 71, 111),   # Carmine Red
+    QColor(255, 209, 102),  # Orange Yellow
+    QColor(6, 214, 160),    # Green
+    QColor(17, 138, 178),   # Blue
+    QColor(7, 59, 76),      # Midnight Green
+]
+
+
+'''
+This function is for calculating associated results (i.e. results
+for a selection that are not directly tied to the values of a single channel)
+This particular example calculates the correlation between the corrected
+87Sr/86Sr ratios and the Rb87 interference for each selection.
+'''
+def getSelRatioIntensityCorr(sel):
+    result = Result()
+
+    try:
+        Sr8786_Corr = data.timeSeries("Sr8786_Corr")
+        Rb87AsPPM = data.timeSeries("Rb87asPPM")
+    except RuntimeError:
+        return result
+
+    array_1 = Sr8786_Corr.dataForSelection(sel)
+    array_2 = Rb87AsPPM.dataForSelection(sel)
+
+    result.setValue(np.corrcoef(array_1, array_2)[0,1])
+    return result
+
+
 
 def runDRS():
 
@@ -64,7 +178,6 @@ def runDRS():
 
     # Interp onto index time and baseline subtract
     drs.message("Interpolating onto index time and baseline subtracting...")
-    drs.progress(25)
 
     allInputChannels = data.timeSeriesList(data.Input)
     blGrp = None
@@ -78,11 +191,7 @@ def runDRS():
     else:
         blGrp = data.selectionGroupList(data.Baseline)[0]
 
-    for counter, channel in enumerate(allInputChannels):
-        drs.message("Baseline subtracting %s" % channel.name)
-        drs.progress(25 + 50*counter/len(allInputChannels))
-
-        drs.baselineSubtract(blGrp, [allInputChannels[counter]], mask, 25, 75)
+    drs.baselineSubtract(blGrp, allInputChannels, mask, 15, 35)
 
     drs.message("Checking for half masses...")
     drs.progress(35)
@@ -358,6 +467,79 @@ def runDRS():
         data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
 
 
+    # CaPO Plot and Correction
+    if len(settings['CaPO_RMs']) > 0:
+        print("Here are the RMs for CaPO correction:", settings['CaPO_RMs'])
+        PLOT.clearGraphs()
+
+        # Get Sr signal and deviations for chosen RMs:
+        Sr8786 = data.timeSeries('StdCorr_Sr8786')
+        totalSr = data.timeSeries('TotalSrBeam')
+
+        #collect up all deviations and Sr intensities here
+        devs_main = []
+        sigs_main = []
+
+        for i, rm in enumerate(settings['CaPO_RMs']):
+            # Also have list for this group only. For plotting below
+            devs = []
+            sigs = []
+            try:
+                sg = data.selectionGroup(rm)
+            except RuntimeError as err:
+                IoLog.warning(f"Could not get the selections for group {rm}: {err}")
+                continue
+
+            try:
+                true = data.referenceMaterialData(rm)['87Sr/86Sr'].value()
+            except KeyError as err:
+                IoLog.warning(f"Could not get the \'87Sr/86Sr\' value for {rm}: {err}")
+                continue
+
+            for sel in sg.selections():
+                meas = data.result(sel, Sr8786).value()
+                devs.append(meas/true)
+                devs_main.append(meas/true)
+                sigs.append(data.result(sel, totalSr).value())
+                sigs_main.append(data.result(sel, totalSr).value())
+
+            g = PLOT.addGraph()
+            g.setName(rm)
+            g.setLineStyle('lsNone')
+            g.setScatterStyle('ssDisc', 6.0, PLOT_COLORS[i])
+            g.setData(np.array(sigs), np.array(devs))
+
+        # Now add fit to all data
+        def fitFunc(t, a, b):
+            return a + b*t
+
+        # Fit a curve to the raw downhole data
+        sigs_array = np.array(sigs_main)
+        devs_array = np.array(devs_main)
+        params, cov = curve_fit(fitFunc, sigs_array, devs_array, ftol=1e-5)
+        print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
+
+        # Show the fit +/- 10% of the spread in signals
+        sigs_range = sigs_array.max() - sigs_array.min()
+        fit_x = np.linspace(
+            sigs_array.min() - sigs_range * 0.1,
+            sigs_array.max() + sigs_range * 0.1 ,
+            10
+        )
+        fit_y = params[1]*fit_x + params[0]
+
+        g = PLOT.addGraph()
+        g.setName("fit")
+        g.setData(fit_x, fit_y)
+
+        PLOT.left().setLabel('87Sr/86Sr Deviation (meas/true)')
+        PLOT.bottom().setLabel('Total Sr (V)')
+        PLOT.setToolsVisible(False)
+        PLOT.rescaleAxes()
+        PLOT.replot()
+
+    data.registerAssociatedResult("Corr_Sr8786_Sr88_V", getSelRatioIntensityCorr)
+
     drs.message("Finished!")
     drs.progress(100)
     drs.finished()
@@ -397,6 +579,7 @@ def settingsWidget():
     drs.setSetting("CaArBias", 0.)
     drs.setSetting("Sr88_86_reference", 8.37520938)  #Konter & Storm (2014)
     drs.setSetting("Rb87_85_reference", 0.385710)    #Konter & Storm (2014)
+    drs.setSetting("CaPO_RMs", [])
 
     drs.setSetting("PropagateError", False)
 
@@ -412,6 +595,8 @@ def settingsWidget():
     rmComboBox.addItems(rmNames)
     if settings["ReferenceMaterial"] in rmNames:
         rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+        drs.setSetting("ReferenceMaterial", settings["ReferenceMaterial"])
+
     rmComboBox.textActivated.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
     formLayout.addRow("Reference material", rmComboBox)
 
@@ -477,9 +662,30 @@ def settingsWidget():
     rb87_85_refLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb87_85_reference", float(t)))
     formLayout.addRow("Reference Rb87/Rb85 value", rb87_85_refLineEdit)
 
+    setExtButton = QtGui.QToolButton(widget)
+    rmMenu = ReferenceMaterialsMenu(setExtButton)
+    rmMenu.rmsChanged.connect(lambda l: drs.setSetting("CaPO_RMs", l))
+    setExtButton.setMenu(rmMenu)
+    setExtButton.setPopupMode(QtGui.QToolButton.InstantPopup)
+    setExtButton.setIcon(CUI().icon('trophy'))
+    setExtButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+    formLayout.addRow("RMs for CaPO correction:", setExtButton)
+
     propCheckBox = QtGui.QCheckBox(widget)
     propCheckBox.setChecked(settings["PropagateError"])
     propCheckBox.toggled.connect(lambda t: drs.setSetting("PropagateError", bool(t)))
     formLayout.addRow("Propagate Errors?", propCheckBox)
+
+    # Plot for CaPO correction
+    formLayout.addRow('CaPO Correction fit', PLOT)
+
+    # Restore settings
+    try:
+        settings = drs.settings()
+        print('Restoring settings...')
+        print(settings)
+        rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+    except KeyError:
+        pass
 
     drs.setSettingsWidget(widget)
