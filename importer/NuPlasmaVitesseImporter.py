@@ -16,11 +16,11 @@ from iolite.QtCore import QDateTime
 
 
 def accepted_files():
-    return ".run"
+    return ".csv"
 
 
 def correct_format():
-    IoLog.debug("correct_format for Vitesse file importer called on file = %s"%(importer.fileName))
+    # IoLog.debug("correct_format for Vitesse file importer called on file = %s"%(importer.fileName))
 
     if importer.fileName.endswith('csv'):
         nrf_regex = r"Cycle time \(ms\),x"
@@ -89,25 +89,25 @@ def import_data():
         }
     )
 
+    mdf = mdf.dropna(axis='columns', how='all')
     mdf = mdf.sort_values(by=['Cycle time (ms)'])
 
     importer.message('Adding channel data')
     importer.progress(30)
 
-    cps_cols = [c for c in mdf.columns if 'cps' or 'ppm' in str(c)]
+    col_names = [c for c in mdf.columns if 'cps' or 'ppm' in str(c)]
+    cols = [mdf[col] for col in col_names if not 'Cycle time (ms)' in col]
     channel_list = []  # List of channels loaded to be reported in UI
-    for col in cps_cols:
+    for col in col_names:
+        if 'Cycle time (ms)' in col:
+            continue
         try:
-            m, el = re.search(r'(\d+)(\w+) cps', col).groups()
-            data.addDataToInput(f'{el}{m}', mdf['Cycle time (ms)']/1000., mdf[col], {'machineName': 'Vitesse'})
+            m, el = re.search(r'(\d+)(\w+).+', col).groups()
             channel_list.append(f'{el}{m}')
         except:
-            try:
-                m, el = re.search(r'(\d+)(\w+) ppm', col).groups()
-                data.addDataToInput(f'{el}{m}', mdf['Cycle time (ms)']/1000., mdf[col], {'machineName': 'Vitesse'})
-                channel_list.append(f'{el}{m}')
-            except:
-                pass
+            channel_list.append(col)
+
+    data.addManyDataToInput(channel_list, mdf['Cycle time (ms)']/1000., cols, {'machineName': 'Vitesse'})
 
     importer.message('Adding file objects')
     importer.progress(90)
@@ -122,9 +122,6 @@ def import_data():
         len(mdf),
         channel_list
     )
-
-    # Now calculate Total Beam:
-    data.calculateTotalBeam()
 
     importer.message('Finished')
     importer.progress(100)
