@@ -102,29 +102,29 @@ def runDRS():
 	Fract = (np.log(8.37520938/(PSrCaAr88/PSrCaAr86))) / (np.log(87.9056/85.9093))*mask
 	RbFract = Fract * RbBias
 	Rb87 = (Rb85 * 27.8346 / 72.1654) / (np.power((86.90918 / 84.9118), RbFract))
-	Sr87 = SrRb87 - Rb87
+	Sr87_c = SrRb87 - Rb87
 	CaArFract = Fract * CaArBias
 	Ca84 = CaAr82 * 3.22411 / np.power((83.917989 / 81.921122), CaArFract)
-	Sr84 = SrCaAr84 - Ca84
-	Sr88 = SrCaAr88 - ((CaAr82 * .187 / .647) / np.power((87.9149151 / 81.9210049), Fract))
-	Sr86 = SrCaAr86 - ((CaAr82 * .004 / .647) / np.power((85.9160721 / 81.9210049), Fract))
+	Sr84_c = SrCaAr84 - Ca84
+	Sr88_c = SrCaAr88 - ((CaAr82 * .187 / .647) / np.power((87.9149151 / 81.9210049), Fract))
+	Sr86_c = SrCaAr86 - ((CaAr82 * .004 / .647) / np.power((85.9160721 / 81.9210049), Fract))
 
 	drs.message("Calculating ratios...")
 	drs.progress(60)
 
 	Sr8786_Uncorr = (SrRb87 / SrCaAr86) * np.power((86.9089 / 85.9093), Fract) * mask
-	Sr8786_Corr = (Sr87 / Sr86) * np.power((86.9089 / 85.9093), Fract) * mask
-	Rb87Sr86ratio = (Rb87 / Sr86) * np.power((86.9089 / 85.9093), Fract) * mask
+	Sr8786_Corr = (Sr87_c / Sr86_c) * np.power((86.9089 / 85.9093), Fract) * mask
+	Rb87Sr86ratio = (Rb87 / Sr86_c) * np.power((86.9089 / 85.9093), Fract) * mask
 	Sr8486_Uncorr = (SrCaAr84 / SrCaAr86) * np.power((83.9134 / 85.9093), Fract) * mask
-	Sr8486_Corr = (Sr84 / Sr86) * np.power((83.9134 / 85.9093), Fract) * mask
+	Sr8486_Corr = (Sr84_c / Sr86_c) * np.power((83.9134 / 85.9093), Fract) * mask
 	Rb87asPPM = (Rb87 / SrRb87) * 1000000 * mask
 	CaAr84asPPM = (Ca84 / SrCaAr84) * 100000 * mask
-	TotalSrBeam = Sr88 + Sr84 + Sr86 + Sr87 * mask
+	TotalSrBeam = Sr88_c + Sr84_c + Sr86_c + Sr87_c * mask
 	inRun8283_Ratio = CaAr82 / CaAr83	* mask	#This is a measure of REE vs. CaAr contributions. If pure CaAr = 4.9. If pure REE it's not entirely predictable, based on solution analysis of Indian perovsite = 3.6, Indian WR = 2.4.
 
 	#Gather up intermediate channels and add them as time series:
-	int_channel_names = ['PFract', 'PSrCaAr86', 'PSrCaAr88', 'Fract', 'RbFract', 'Rb87', 'Sr87', 'CaArFract', 'Ca84', 'Sr84', 'Sr88', 'Sr86', 'Rb87asPPM', 'CaAr84asPPM', 'inRun8283_Ratio']
-	int_channels = [PFract, PSrCaAr86, PSrCaAr88, Fract, RbFract, Rb87, Sr87, CaArFract, Ca84, Sr84, Sr88, Sr86, Rb87asPPM, CaAr84asPPM, inRun8283_Ratio]
+	int_channel_names = ['PFract', 'PSrCaAr86', 'PSrCaAr88', 'Fract', 'RbFract', 'Rb87', 'Sr87_c', 'CaArFract', 'Ca84', 'Sr84_c', 'Sr88_c', 'Sr86_c', 'Rb87asPPM', 'CaAr84asPPM', 'inRun8283_Ratio']
+	int_channels = [PFract, PSrCaAr86, PSrCaAr88, Fract, RbFract, Rb87, Sr87_c, CaArFract, Ca84, Sr84_c, Sr88_c, Sr86_c, Rb87asPPM, CaAr84asPPM, inRun8283_Ratio]
 	for name, channel in zip(int_channel_names, int_channels):
 		data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
 
