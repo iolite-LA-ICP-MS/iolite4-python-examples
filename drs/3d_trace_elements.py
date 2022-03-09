@@ -33,14 +33,14 @@ from iolite.QtGui import QToolButton, QMenu, QWidgetAction, QCheckBox,QAbstractI
 from iolite.QtGui import QWidget, QVBoxLayout, QSizePolicy, QDialog, QHBoxLayout, QShortcut, QKeySequence, QGroupBox, QPen
 from iolite.QtGui import QHeaderView, QSplitter, QPlainTextEdit, QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem
 from iolite.QtGui import QInputDialog, QFileDialog, QFont, QBrush, QAction, QStyledItemDelegate, QFrame, QFormLayout, QSpinBox, QListWidget
-from iolite.QtGui import QItemSelectionModel, QPushButton, QApplication
-from iolite.QtCore import Signal, QAbstractListModel, QModelIndex, QPoint, QFile, QIODevice, QTimer, QEvent, QSettings, QDir
+from iolite.QtGui import QItemSelectionModel, QPushButton, QApplication, QMargins
+from iolite.QtCore import Signal, QAbstractListModel, QModelIndex, QPoint, QFile, QIODevice, QTimer, QEvent, QSettings, QDir, QRegularExpression
 from iolite.Qt import Qt
 from iolite.QtUiTools import QUiLoader
 
 from iolite.ui import IolitePlotPyInterface as Plot
 from iolite.ui import Iolite3DPlotPyInterface as Plot3d
-from iolite.ui import OverlayButton, QCPColorGradient, QCPErrorBars, PythonSyntaxHighlighter, OverlayMessage
+from iolite.ui import OverlayButton, QCPColorGradient, QCPErrorBars, PythonSyntaxHighlighter, OverlayMessage, QCPRange
 from iolite.ui import CommonUIPyInterface as CUI
 from iolite.types import Result
 
@@ -80,6 +80,7 @@ colors = {
 '''
 Block functions and classes
 '''
+
 
 def linear(B, x):
     return B[0]*x + B[1]
@@ -153,7 +154,12 @@ class Block(object):
         cols = [col for col in self.df.columns if col.startswith(name)]
         cols += ['sel_mid_time', 'sel_duration', 'group']
         df = df[cols]
-        df = df[df['group'].isin(data.timeSeries(name).property('External standard').split(','))]
+        ext = data.timeSeries(name).property('External standard')
+        if type(ext) == str :
+            df = df[df['group'].isin(ext.split(','))]
+        else:
+            raise RuntimeError(f'No externals set for {name}')
+
         return df
 
     def updateDataFrame(self):
@@ -197,7 +203,33 @@ class Block(object):
         self.lastDFHash = self.hash()
 
     def fit(self, name):
-        if name not in self.fits or self.fits[name]['hash'] != self.fitHash(name):
+        if data.timeSeries(name).property('External standard') == 'Model':
+            # Note: when the property is set with a dict from python
+            # it is converted to QVariantMap, therefore the keys become strings
+            # so need to use the string version of label to have it match!
+            try:
+                sens = data.timeSeries(name).property('ModelSensitivities')[str(self.label)]
+                self.fits[name] = {
+                    'slope': sens,
+                    'slope_uncert': sens*0.01,
+                    'intercept': 0.,
+                    'intercept_uncert': 0.,
+                    'hash': self.fitHash(name),
+                    'sm_res': 0
+                }
+            except:
+                self.fits[name] = {
+                    'slope': np.nan,
+                    'slope_uncert': np.nan,
+                    'intercept': np.nan,
+                    'intercept_uncert': np.nan,
+                    'hash': self.fitHash(name),
+                    'sm_res': np.nan
+                }
+        elif name not in self.fits:
+            self.fits[name] = self.updateFit(name)
+
+        elif not self.fits[name] is None and self.fits[name]['hash'] != self.fitHash(name):
             self.fits[name] = self.updateFit(name)
 
         return self.fits[name]
@@ -207,6 +239,11 @@ class Block(object):
         fitThroughZero = channel.property('FitThroughZero')
         model = channel.property('Model') if channel.property('Model') else 'ODR'
         df = self.dataFrameForChannel(name).copy()
+
+        if not df[f'{channel.name}_RMppm'].notna().values.any():
+            print(f'No data for {channel.name} for chosen RMs. No fit.')
+            return
+
         df = df.dropna()
         func = lineartz if fitThroughZero or len(df['group'].unique()) == 1 else linear
         if len(df['group'].unique()) == 1:
@@ -263,7 +300,10 @@ class Block(object):
         }
 
     def slope(self, name):
-        return self.fit(name)['slope']
+        if not self.fit(name) is None:
+            return self.fit(name)['slope']
+        else:
+            return None
 
     def slopeUncert(self, name):
         return self.fit(name)['slope_uncert']
@@ -401,7 +441,11 @@ def findBlocks(method=None):
 
     We also want to be able to use one of the more automatic methods with some (not all) selections being specified.
     '''
-    externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name])))
+    externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name and type(c.property('External standard')) == str])))
+    try:
+        externalsInUse.remove('Model')
+    except:
+        pass
     groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
     selections = list(itertools.chain(*[sg.selections() for sg in groups]))
     selections.sort(key=lambda s: s.midTimeInSec)
@@ -497,6 +541,9 @@ def fitSurface(blocks, channelName):
     elif len(blocks) < 3 and splineType != "StepLinear":
         IoLog.information("Changing spline type to StepLinear due to fewer than 3 blocks found")
         splineType = 'StepLinear'
+
+    if np.all(np.isnan(slopes)):
+        return None, None
 
     slopes_unc[slopes_unc == 0] = np.nanmean(slopes)*0.05
     intercepts_unc[intercepts_unc == 0] = 1e-6
@@ -756,6 +803,7 @@ def runDRS():
     settings = drs.settings()
 
     print(settings)
+    drs.clearSelectionProperties(QRegularExpression("Sensitivity.+"))
 
     indexChannel = data.timeSeries(settings["IndexChannel"])
     drs.setIndexChannel(indexChannel)
@@ -815,6 +863,20 @@ def runDRS():
     # Baseline Subtraction
     drs.baselineSubtract(blGrp, data.timeSeriesList(data.Input), mask, 10, 20)
 
+    # Check that some Externals have been selected:
+    atLeastOneExt = False
+    for channel in data.timeSeriesList(data.Input):
+        if type(channel.property("External standard")) == str:
+            atLeastOneExt = True
+            break
+
+    if not atLeastOneExt:
+        IoLog.error(f"No external standards are set. Please set at least one RM before continuing.")
+        drs.message.emit("DRS did not finish.")
+        drs.progress.emit(100)
+        drs.finished.emit()
+        return
+
     # Find blocks
     drs.message.emit('Finding blocks')
     drs.progress.emit(23)
@@ -834,6 +896,11 @@ def runDRS():
         except:
             IoLog.warning(f"There was an issue calculating the surface for {input.name}")
             continue
+
+        if not surface:
+            IoLog.warning(f'No surface for {input.name}')
+            continue
+
         cps = data.timeSeries(f'{input.name}_CPS')
         ppm = surface(cps.time(), cps.data())
 
@@ -1073,6 +1140,8 @@ def runDRS():
     badSelsString = badSelsString if len(badSelsString) < 25 else badSelsString[0:23]+'...'
     IoLog.warning(f'There was a problem calculating the sensitivity of {badChannelsString} for selection(s) {badSelsString}')
 
+    # Need to update results again to get LODs calculated
+    data.updateResults()
     drs.message.emit("Finished!")
     drs.progress.emit(100)
     drs.finished.emit()
@@ -1236,7 +1305,9 @@ class ReferenceMaterialComboBox(QComboBox):
     def showPopup(self):
         menu = ReferenceMaterialsMenu(self)
         menu.activeChannels = [self.channel.name]
-        menu.rmsForActiveChannels = self.channel.property('External standard').split(',')
+        menu.rmsForActiveChannels = []
+        if type(self.channel.property('External standard')) == str:
+            menu.rmsForActiveChannels = self.channel.property('External standard').split(',')
         menu.rmsChanged.connect(self.updateText)
         menu.setFixedWidth(self.width)
         p = self.pos
@@ -1260,13 +1331,17 @@ class ReferenceMaterialsMenu(QMenu):
             self.addAction(a)
             cb.clicked.connect(partial(self.updateChannels, rm))
 
+        self.addSeparator()
+        modelAction = self.addAction('Model')
+        modelAction.triggered.connect(self.setChannelsToModel)
+
         self.aboutToShow.connect(self.updateMenu)
 
     def updateMenu(self):
         for a in self.actions():
-            cb = a.defaultWidget()
-            cb.setChecked(False)
             try:
+                cb = a.defaultWidget()
+                cb.setChecked(False)
                 if cb.text in list(itertools.chain.from_iterable([rms.split(',') for rms in self.rmsForActiveChannels])):
                     cb.setChecked(True)
             except Exception as e:
@@ -1279,12 +1354,21 @@ class ReferenceMaterialsMenu(QMenu):
             except:
                 rms_for_ch = []
 
+            if 'Model' in rms_for_ch:
+                rms_for_ch = []
+
             if b:
                 rms_for_ch = list(set(rms_for_ch + [rmName]))
             else:
                 rms_for_ch = list(filter(lambda rm: rm != rmName, rms_for_ch))
 
             c.setProperty('External standard', ','.join(rms_for_ch))
+
+        self.rmsChanged.emit()
+
+    def setChannelsToModel(self):
+        for c in [data.timeSeries(cn) for cn in self.activeChannels]:
+            c.setProperty('External standard', 'Model')
 
         self.rmsChanged.emit()
 
@@ -1519,6 +1603,12 @@ class ChannelsMenu(QMenu):
         for s in self.selections:
             s.setProperty(self.propName, '')
         self.channels = []
+
+        # If this is resetting the external affinities, also reset the Ext Affinity
+        if self.propName == 'Affinity elements':
+            for s in self.selections:
+                s.setProperty('External affinity', '')
+
         self.channelsChanged.emit(self.selections)
 
     def setSelectionsForCriteria(self):
@@ -1900,8 +1990,8 @@ class BlockPlot(QWidget):
         self.plot = Plot(self)
         self.plot.setBackground(CUI().tabBackgroundColor())
         self.plot.setToolsVisible(False)
-        self.plot.left().setLabel('Intensity')
-        self.plot.bottom().setLabel('Concentration')
+        self.plot.left().label = 'Intensity'
+        self.plot.bottom().label = 'Concentration'
         self.layout().addWidget(self.plot)
         
         self.logButton = OverlayButton(self.plot, 'BottomLeft', 0, 0)
@@ -1972,8 +2062,8 @@ class BlockPlot(QWidget):
         g = plot.addGraph()
         tb = data.timeSeries('TotalBeam')
         g.setData(tb.time(), tb.data())
-        plot.bottom().setLabel('Time (s)')
-        plot.left().setLabel('TotalBeam')
+        plot.bottom().label = 'Time (s)'
+        plot.left().label = 'TotalBeam'
         plot.setFixedHeight(200)
         plot.setToolsVisible(False)
         plot.bottom().setDateTime(True)
@@ -2016,7 +2106,7 @@ class BlockPlot(QWidget):
                 c.setAlpha(90)
                 rect.brush = QBrush(c)
 
-            plot.right().setRange( (0, 1) )
+            plot.right().range = QCPRange(0, 1)
             plot.rescaleAxes()
             plot.replot()
 
@@ -2076,25 +2166,59 @@ class BlockPlot(QWidget):
         self.plot.bottom().setLogarithmic(b)
         self.isLog = b
         if self.isLog:
-            self.plot.bottom().setRange([0.001, self.x_max*5])
-            self.plot.left().setRange([1, self.y_max*5])
+            self.plot.bottom().range = QCPRange(0.001, self.x_max*5)
+            self.plot.left().range = QCPRange(1, self.y_max*5)
         else:
-            self.plot.bottom().setRange([0, self.x_max*1.1])
-            self.plot.left().setRange([0, self.y_max*1.1])
+            self.plot.bottom().range = QCPRange(0, self.x_max*1.1)
+            self.plot.left().range = QCPRange(0, self.y_max*1.1)
         self.plot.replot()        
 
     def updatePlot(self):
         self.plot.clearGraphs()
         self.plot.clearItems()
+
         channel = self.settingsWidget.selectedChannelNames[0]
         if len(self.settingsWidget.calibration.blocks) < 1:
             print('No blocks to update BlockPlot with...')
             return
 
+        extStd = data.timeSeries(channel).property('External standard')
+        if type(extStd) != str or (extStd.split(',')[0] not in data.selectionGroupNames() and extStd != 'Model'):
+            print('Invalid external standard so not going to update plot.')
+            self.plot.rescaleAxes()
+            self.plot.replot()
+            return
+
+        # First, make sure we have RM values for this channel:
+        this_df = self.settingsWidget.calibration.blocks[0].dataFrame()[f'{channel}_RMppm']
+        if not this_df.notna().values.any() and extStd != 'Model':
+            print(f'No valid values for reference materials for {channel}')
+            self.plot.rescaleAxes()
+            self.plot.replot()
+            return
+
         # Make sure that the axes have the same extents for all blocks
         # Makes it easier to see differences
-        self.x_max = np.nanmax([np.nanmax(b.dataFrame()[f'{channel}_RMppm']) for b in self.settingsWidget.calibration.blocks])
         self.y_max = np.nanmax([np.nanmax(b.dataFrame()[f'{channel}']) for b in self.settingsWidget.calibration.blocks])
+        self.y_min = np.nanmin([np.nanmin(b.dataFrame()[f'{channel}']) for b in self.settingsWidget.calibration.blocks])
+
+        if np.all(np.isnan(np.array([b.slope(channel) for b in self.settingsWidget.calibration.blocks]))):
+            print(f'No valid values for reference materials for {channel}')
+            self.plot.rescaleAxes()
+            self.plot.replot()
+            return
+
+        if extStd == 'Model':
+            self.x_max = np.nanmax([self.y_max/b.slope(channel) for b in self.settingsWidget.calibration.blocks])
+        else:
+            self.x_max = np.nanmax([np.nanmax(b.dataFrame()[f'{channel}_RMppm']) for b in self.settingsWidget.calibration.blocks])
+
+
+        if np.isnan(self.x_max):
+            print(f'No valid values for reference materials for {channel}')
+            self.plot.rescaleAxes()
+            self.plot.replot()
+            return
 
         block = self.settingsWidget.calibration.blocks[self.bn]
         df = block.dataFrameForChannel(channel)
@@ -2103,9 +2227,16 @@ class BlockPlot(QWidget):
 
         ss_res = np.sum( (df[channel] - (slope*df[f'{channel}_RMppm'] + intercept))**2 )
         ss_tot = np.sum( (df[channel] - np.mean(df[channel]))**2 )
+        #Note, for modeled fits, the r_sq value will always be 1. This is a little misleading,
+        # so will manually change this below, when the annotation is added to the plot
         r_sq = 1 - (ss_res / ss_tot) if len(df) > 1 else 1
 
-        x_vals = np.logspace(-3, ceil(log(self.x_max)), 200)
+        try:
+            x_vals = np.logspace(-3, ceil(log(self.x_max)), 200)
+        except:
+            x_vals = np.logspace(-3, 3, 200)
+            self.x_max = 1000.
+
         y_vals = slope * x_vals + intercept
 
         #Add error envelope
@@ -2162,19 +2293,31 @@ class BlockPlot(QWidget):
 
         # Add slope and intercept annotation here:
         ann = self.plot.annotate('', 0.01, 0.01, 'ptAxisRectRatio', Qt.AlignLeft | Qt.AlignTop)
-        ann.text = '''
-                <p style="color:black;">
-                <b>Slope</b>: %s<br>
-                <b>Intercept</b>: %s<br>
-                <b><i>R²</i></b> : %.3f
-                </p>'''%(formatResult(slope, block.fit(channel)['slope_uncert'])[0], formatResult(intercept, block.fit(channel)['intercept_uncert'])[0], r_sq)
+        if extStd == 'Model':
+            ann.text = '''
+                    <p style="color:black;">
+                    <b>Slope</b>: %s<br>
+                    <b>Intercept</b>: %s<br>
+                    <b><i>R²</i></b> : N/A</p>'''%(formatResult(slope, block.fit(channel)['slope_uncert'])[0], formatResult(intercept, block.fit(channel)['intercept_uncert'])[0])
+
+            self.plot.annotate('*Modeled', 0.9, 0.9, 'ptAxisRectRatio', Qt.AlignCenter, Qt.AlignCenter, False)
+
+        else:
+            ann.text = '''
+                    <p style="color:black;">
+                    <b>Slope</b>: %s<br>
+                    <b>Intercept</b>: %s<br>
+                    <b><i>R²</i></b> : %.3f</p>'''%(formatResult(slope, block.fit(channel)['slope_uncert'])[0], formatResult(intercept, block.fit(channel)['intercept_uncert'])[0], r_sq)
 
         if self.isLog:
-            self.plot.bottom().setRange([0.001, self.x_max*5])
-            self.plot.left().setRange([1, self.y_max*5])
+            self.plot.bottom().range = QCPRange(0.001, self.x_max*5)
+            self.plot.left().range = QCPRange(1, self.y_max*5)
         else:    
-            self.plot.bottom().setRange([0, self.x_max*1.1])
-            self.plot.left().setRange([0, self.y_max*1.1])
+            self.plot.bottom().range = QCPRange(0, self.x_max*1.1)
+            self.plot.left().range = QCPRange(0, self.y_max * 1.1)
+
+        print(f'self.y_max BEFORE: {self.y_max * 1.1}')
+        print(f'left axis max: {self.plot.left().range.upper()}')
 
         self.plot.setLegendVisible(self.showLegend)
         self.plot.setLegendAlignment(Qt.AlignBottom | Qt.AlignRight)
@@ -2190,8 +2333,8 @@ class FitsPlot(Plot):
         self.settingsWidget = parent
         self.setToolsVisible(False)
         self.setBackground(CUI().tabBackgroundColor())
-        self.left().setLabel('Intensity')
-        self.bottom().setLabel('Concentration')
+        self.left().label = 'Intensity'
+        self.bottom().label = 'Concentration'
         self.grad = QCPColorGradient('gpViridis')
 
         self.setLegendAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -2228,16 +2371,30 @@ class FitsPlot(Plot):
 
     def updatePlot(self):
         self.clearGraphs()
+        self.clearItems()
 
         block_times = [block.midTime() for block in self.settingsWidget.calibration.blocks]
         channel = self.settingsWidget.selectedChannelNames[0]
         self.blockCount = len(self.settingsWidget.calibration.blocks)
+        extStd = data.timeSeries(channel).property('External standard')
+        if type(extStd) != str or (extStd.split(',')[0] not in data.selectionGroupNames() and extStd != 'Model'):
+            self.replot()
+            return
 
         for i, block in enumerate(self.settingsWidget.calibration.blocks):
             df = self.settingsWidget.calibration.blocks[i].dataFrameForChannel(channel)
 
-            x_max = df[f'{channel}_RMppm'].dropna().max()
-            x_max += x_max * 0.1
+            if extStd == 'Model':
+                x_max = 100.
+                self.annotate('*Modeled', 0.9, 0.9, 'ptAxisRectRatio', Qt.AlignCenter, Qt.AlignCenter, False)
+
+            else:
+                if not df[f'{channel}_RMppm'].notna().values.any():
+                    self.replot()
+                    return
+
+                x_max = df[f'{channel}_RMppm'].dropna().max()
+                x_max += x_max * 0.1
 
             slope = block.slope(channel)
             intercept = block.intercept(channel)
@@ -2260,23 +2417,32 @@ class FitParamsPlot(Plot):
         self.settingsWidget = parent
         self.setToolsVisible(False)
         self.setBackground(CUI().tabBackgroundColor())
-        self.left().setLabel('Slope')
-        self.right().setLabel('Intercept')
-        self.bottom().setLabel('Time')
+        self.left().label = 'Slope'
+        self.right().label = 'Intercept'
+        self.bottom().label = 'Time'
         self.bottom().setDateTime(True)
-        self.top().setLabel('Block')
-        self.right().setVisible(True)
-        self.top().setVisible(True)
+        self.top().label = 'Block'
+        self.right().visible = True
+        self.top().visible = True
 
-        self.right().setLabelColor(Qt.red)
-        self.left().setLabelColor(Qt.blue)
+        self.right().labelColor = QColor(Qt.red)
+        self.left().labelColor = QColor(Qt.blue)
 
     def updatePlot(self):
         self.clearGraphs()
+        self.clearItems()
 
         channel = self.settingsWidget.selectedChannelNames[0]
+        extStd = data.timeSeries(channel).property('External standard')
+        if type(extStd) != str or (extStd.split(',')[0] not in data.selectionGroupNames() and extStd != 'Model'):
+            self.replot()
+            return
 
         block_times = [block.midTime() for block in self.settingsWidget.calibration.blocks]
+
+        if not self.settingsWidget.calibration.blocks[0].dataFrame()[f'{channel}_RMppm'].notna().values.any() and extStd != 'Model':
+            self.replot()
+            return
 
         slopes = [block.slope(channel) for block in self.settingsWidget.calibration.blocks]
         slopes_err = [block.slopeUncert(channel) for block in self.settingsWidget.calibration.blocks]
@@ -2301,10 +2467,18 @@ class FitParamsPlot(Plot):
         inters_eb.setData(inters_err)
 
         self.rescaleAxes()
-        self.top().setRange([1, len(block_times)])
+        self.top().range = QCPRange(1, len(block_times))
         self.bottom().scaleRange(1.1)
         self.left().scaleRange(1.1)
         self.top().scaleRange(1.1)
+
+        if extStd == 'Model':
+            self.left().label = 'Slope (Modeled)'
+            self.right().label = 'Intercept (Modeled)'
+        else:
+            self.left().label = 'Slope'
+            self.right().label = 'Intercept'
+
         self.replot()
 
 
@@ -2315,7 +2489,7 @@ class FractionationPlot(Plot):
         self.settingsWidget = parent
         self.setToolsVisible(False)
         self.setBackground(CUI().tabBackgroundColor())
-        self.bottom().setLabel('Beam seconds')
+        self.bottom().label = 'Beam seconds'
         self.setLegendVisible(True)
 
         self.msg = OverlayMessage(
@@ -2332,6 +2506,19 @@ class FractionationPlot(Plot):
         try:
             channel = self.settingsWidget.selectedChannelNames[0]
         except:
+            return
+
+        extStd = data.timeSeries(channel).property('External standard')
+
+        if extStd == 'Model':
+            text  = self.annotate('Fractionation correction not available\nfor channels with modelled sensitivity',
+                          0.5, 0.5, 'ptAxisRectRatio', Qt.AlignCenter, Qt.AlignCenter, False)
+            text.padding = QMargins(10,10,10,10)
+            self.replot()
+            return
+
+        if type(extStd) != str or extStd.split(',')[0] not in data.selectionGroupNames():
+            self.replot()
             return
 
         fdf = self.settingsWidget.calibration.fractionation(channel)
@@ -2388,7 +2575,7 @@ class FractionationPlot(Plot):
 #            print('No selection for fractionation plot')
 
 
-        self.left().setLabel(f'Normalized {data.timeSeries(channel).property("Element")}/Internal standard')
+        self.left().label = f'Normalized {data.timeSeries(channel).property("Element")}/Internal standard'
         self.rescaleAxes()
         self.replot()
 
@@ -2400,7 +2587,7 @@ class JacksonPlot(Plot):
         self.settingsWidget = parent
         self.setToolsVisible(False)
         self.setBackground(CUI().tabBackgroundColor())
-        self.bottom().setLabel('Condensation temperature (K)')
+        self.bottom().label = 'Condensation temperature (K)'
         self.grad = QCPColorGradient('gpViridis')
         self.setLegendVisible(True)
 
@@ -2417,7 +2604,7 @@ class JacksonPlot(Plot):
             isElements = sel.property('Internal element').split(',')
 
             channelName = self.settingsWidget.selectedChannelNames[0]
-            self.left().setLabel(f'{channelName} concentration (ppm)')
+            self.left().label = f'{channelName} concentration (ppm)'
         except:
             return
 
@@ -2455,9 +2642,260 @@ class JacksonPlot(Plot):
         self.addStraightLine([thistc, conc.min()], [thistc, conc.max()])
 
         self.rescaleAxes()
-        self.bottom().setRange([500, 1800])
+        self.bottom().range = QCPRange(500, 1800)
         self.left().scaleRange(1.5)
         self.replot()
+
+class ExtModelDialog(QDialog):
+
+    def __init__(self, calibration, selectedChannels, parent=None):
+        QDialog.__init__(self, parent)
+        self.calibration = calibration
+        self.calibration.updateBlocks()
+        self.selectedChannels = selectedChannels
+        self.blockSplines = {}
+        try:
+            self.setWindowTitle(f'Sensitivity model for channel {self.selectedChannels[0].name}')
+        except:
+            pass
+
+        self.setLayout(QVBoxLayout())
+        mainLayout = QHBoxLayout()
+        leftWidget = QWidget(self)
+        leftWidget.setLayout(QFormLayout())
+        leftWidget.setFixedWidth(225)
+        leftWidget.layout().setContentsMargins(0, 0, 0, 0)
+        self.layout().addLayout(mainLayout)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        self.layout().addWidget(bb)
+        self.channelsTable = QTableWidget(self)
+        self.allChannels = [c.name for c in data.timeSeriesList(data.Input) if 'Total' not in c.name]
+        self.channelsTable.setRowCount(len(self.allChannels))
+        self.channelsTable.setColumnCount(2)
+        self.channelsTable.setHorizontalHeaderLabels(['Channel', 'Abundance'])
+        self.channelsTable.horizontalHeader().setStretchLastSection(True)
+        self.channelsTable.verticalHeader().setVisible(False)
+        self.channelsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.channelsTable.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+        for ri, name in enumerate(self.allChannels):
+            self.channelsTable.setItem(ri, 0, QTableWidgetItem(name))
+            self.channelsTable.item(ri, 0).setFlags(self.channelsTable.item(ri, 0).flags() & ~Qt.ItemIsEditable)
+            element = data.timeSeries(name).property('Element')
+            try:
+                mass = int(data.timeSeries(name).property('Mass'))
+                ab = [i for i in data.elements[element]['isotopes'] if i['massNumber'] == mass][0]['abundance']
+            except Exception as e:
+                ab = 1
+            self.channelsTable.setItem(ri, 1, QTableWidgetItem(f'{ab:.6f}'))
+            self.channelsTable.item(ri, 0).setData(Qt.UserRole, True)
+            if data.timeSeries(name).property('External standard') == 'Model':
+                # If this is a channel using a model, highlight the items differently
+                self.channelsTable.item(ri, 0).setData(Qt.UserRole, False)
+                self.channelsTable.item(ri, 0).setBackground(Qt.black)
+                self.channelsTable.item(ri, 1).setBackground(Qt.black)
+                self.channelsTable.item(ri, 0).setFlags(self.channelsTable.item(ri, 0).flags() & ~Qt.ItemIsSelectable)
+                self.channelsTable.item(ri, 1).setFlags(self.channelsTable.item(ri, 1).flags() & ~Qt.ItemIsSelectable)
+
+            if 'ModelChannels' in self.selectedChannels[0].properties():
+                if name in self.selectedChannels[0].property('ModelChannels'):
+                    index = self.channelsTable.model().index(ri, 0)
+                    self.channelsTable.selectionModel().select(index, QItemSelectionModel.Rows | QItemSelectionModel.Select)
+
+        self.plot = Plot(self)
+        self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        leftWidget.layout().addRow(self.channelsTable)
+        self.fitComboBox = QComboBox(self)
+        self.fitComboBox.addItems([
+            'MeanMean',
+            'MeanMedian',
+            'LinearFit',
+            'WeightedLinearFit',
+            'StepLinear',
+            'StepForward',
+            'StepBackward',
+            'StepAverage',
+            'Nearest',
+            'Akima',
+            'Spline_NoSmoothing',
+            'Spline_Smooth1',
+            'Spline_Smooth2',
+            'Spline_Smooth3',
+            'Spline_Smooth4',
+            'Spline_Smooth5',
+            'Spline_Smooth6',
+            'Spline_Smooth7',
+            'Spline_Smooth8',
+            'Spline_Smooth9',
+            'Spline_Smooth10',
+            'Spline_AutoSmooth'
+        ])
+        self.fitComboBox.setCurrentText(self.fitType())
+        self.fitComboBox.textActivated.connect(self.updateFitType)
+        leftWidget.layout().addRow('Fit type', self.fitComboBox)
+        mainLayout.addWidget(leftWidget)
+        mainLayout.addWidget(self.plot)
+        self.resize(1200, 600)
+
+        self.plot.left().label = 'Abundance corrected CPS/ppm'
+        self.plot.bottom().label = 'Channel (m/z)'
+        self.colorGrad = QCPColorGradient('gpSpectrum')
+
+        self.channelsTable.selectionModel().selectionChanged.connect(self.processSelectionChanged)
+        self.channelsTable.cellChanged.connect(self.processCellChanged)
+
+        self.showLegend = False
+
+        menu = self.plot.contextMenu()
+        menu.addSeparator()
+        la = menu.addAction('Legend')
+        la.setCheckable(True)
+        la.setChecked(self.showLegend)
+        la.triggered.connect(self.toggleLegend)
+
+        self.updatePlot()
+
+    def toggleLegend(self, b):
+        self.showLegend = b
+        # Get axis ranges so that toggling the legend doesn't reset zoom
+        l_range = self.plot.left().range
+        b_range = self.plot.bottom().range
+        self.updatePlot()
+        self.plot.left().setRange(l_range)
+        self.plot.bottom().setRange(b_range)
+        self.plot.replot()
+
+    def fitType(self):
+        try:
+            fitType = [ch.property('ModelFitType') for ch in self.selectedChannels][0]
+            if not fitType:
+                fitType = 'LinearFit'
+        except:
+            fitType = 'LinearFit'
+
+        return fitType
+
+    def updateFitType(self, fit_name):
+        for ch in self.selectedChannels:
+            ch.setProperty('ModelFitType', fit_name)
+
+        self.updatePlot()
+
+    def processCellChanged(self, row, col):
+        # Only process changes in col == 1 == abundance
+        if col != 1:
+            return
+
+        channel_name = self.channelsTable.item(row, 0).text()
+        print(f'Abundance changed for {channel_name}')
+
+    def processSelectionChanged(self):
+        channel_names = [index.data() for index in self.channelsTable.selectionModel().selectedRows()]
+        for ch in self.selectedChannels:
+            ch.setProperty('ModelChannels', channel_names)
+        self.updatePlot()
+
+    def updatePlot(self):
+        print('Updating plot...')
+        self.plot.clearGraphs()
+        self.plot.clearItems()
+
+        channelsForFit = [index.data() for index in self.channelsTable.selectionModel().selectedRows()]
+        iForFit = [index.row() for index in self.channelsTable.selectionModel().selectedRows() if data.timeSeries(index.data()).property('External standard') != 'Model']
+        iForFit.sort()
+
+        channelMasses = np.array([int(data.timeSeries(n).property('Mass')) for n in self.allChannels], dtype=np.float)
+        xOut = np.linspace(channelMasses.min(), channelMasses.max(), 1000)
+        channelAbundances = np.array([float(self.channelsTable.item(ri, 1).text()) for ri in range(self.channelsTable.rowCount)])
+
+        def sensForChannel(block, channel_name):
+            if data.timeSeries(channel_name).property('External standard') == 'Model':
+                return np.nan
+            return block.slope(channel_name)
+
+        # Quick note for future selves: can't plot channel sensitivities in one go because it will have to update if the user
+        # changes any of the isotopic abundances in the table. So, can't put main plotting in __init__() for example
+        for bi, block in enumerate(self.calibration.blocks):
+            block_graph = self.plot.addGraph()
+            block_graph.setName(f"Block {bi}")
+            channelSens = np.array([sensForChannel(block, cn) for cn in self.allChannels], dtype=np.float) / channelAbundances
+            block_graph.setData(channelMasses[np.isfinite(channelSens)], channelSens[np.isfinite(channelSens)])
+            color = self.colorGrad.color(bi, 0, len(self.calibration.blocks))
+            block_graph.setScatterStyle('ssDisc', 6, color, color)
+            block_pen = QPen(QColor(color))
+            block_pen.setStyle(Qt.DotLine)
+            block_graph.setPen(block_pen)
+
+            xForFit = channelMasses[iForFit]
+            yForFit = channelSens[iForFit]
+
+            if len(xForFit) < 1:
+                continue
+
+            if len(xForFit) >= 1:
+                yOut = data.spline(xForFit, yForFit, np.ones(len(yForFit)), self.fitType(), xOut)
+                self.blockSplines[block.label] = (xOut, yOut)
+                fitGraph = self.plot.addGraph()
+                fitGraph.pen = QPen(color, 2)
+                fitGraph.setData(xOut, yOut)
+                fitGraph.removeFromLegend()
+
+            # Also, highlight the masses used in the fit on the plot
+            used_graph = self.plot.addGraph()
+            used_graph.setData(xForFit, yForFit)
+            used_graph.setScatterStyle('ssCircle', 10, Qt.red, Qt.transparent)
+            used_graph.setLineStyle('lsNone')
+            used_graph.removeFromLegend()
+
+
+        for ch in self.selectedChannels:
+            try:
+                this_mass = float(ch.property('Mass'))
+                y_Max = self.plot.left().range.upper()
+                mass_line = self.plot.addStraightLine([this_mass,0], [this_mass, y_Max])
+                mass_line.pen = QPen(Qt.DashLine)
+            except Exception:
+                # TODO: get mass from channel name???
+                pass
+
+        self.plot.rescaleAxes()
+        # Going to get x maximum from channels because if there are a lot of channels in the actinides that are being
+        # fitted, they won't be in the table. So get it from the dataManager
+        try:
+            last_ch_mass = channelMasses.max()
+            self.plot.bottom().range = QCPRange(0, last_ch_mass + last_ch_mass * 0.1)
+        except Exception:
+            self.plot.bottom().range = QCPRange(0, self.plot.bottom().range.upper() + self.plot.bottom().range.upper() * 0.1)
+
+        #self.plot.left().range = QCPRange(0, y_currentMax + y_currentMax * 0.1)
+
+        self.plot.setLegendVisible(self.showLegend)
+        self.plot.setLegendAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        self.plot.replot()
+
+    def blockSensitivities(self, channel_name):
+        from scipy.interpolate import interp1d
+        # Need to get the abundance for this
+        try:
+            mass = float(data.timeSeries(channel_name).property('Mass'))
+            table_row = self.channelsTable.findItems(channel_name, Qt.MatchFixedString)[0].row()
+            abund = float(self.channelsTable.item(table_row, 1).text())
+        except:
+            print(f'Could not calculate block sensitivities for {channel_name}')
+            mass = np.nan
+            abund = np.nan
+
+        bs = {}
+        for bi, block in enumerate(self.calibration.blocks):
+            x, y = self.blockSplines[block.label]
+            f = interp1d(x, y, 'linear', fill_value='extrapolate')
+            S = f(mass)*abund
+            bs[block.label] = S
+
+        return bs
 
 
 class DataStatus(Flag):
@@ -2651,6 +3089,8 @@ class SettingsWidget(QWidget):
         self.bsLineEdit.textEdited.connect(lambda t: drs.setSetting('BeamSecondsValue', float(t)))
         drs.finished.connect(lambda: drs.setProperty('isRunning', False))
 
+        drs.finished.connect(lambda: self.intModel.refreshSelections())
+
         self.intTable.installEventFilter(self)
 
         # Create notices that may or may not be hidden
@@ -2764,6 +3204,9 @@ class SettingsWidget(QWidget):
         self.extTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.extTable.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
 
+        self.extTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.extTable.customContextMenuRequested.connect(self.showExtContextMenu)
+
         self.rmMenu = ReferenceMaterialsMenu(self)
         self.setExtButton.setMenu(self.rmMenu)
         self.setExtButton.setPopupMode(QToolButton.InstantPopup)
@@ -2782,6 +3225,30 @@ class SettingsWidget(QWidget):
         self.extTable.setItemDelegate(ExternalsDelegate(self.extTable))
         #data.dataChanged.connect(lambda: self.extModel.refreshChannels())
         data.dataChanged.connect(self.updateStatus)
+
+    def showExtContextMenu(self, point):
+        index = self.extTable.indexAt(point)
+        rmsIndex = self.extModel.index(index.row(), 1)
+        rms = str(rmsIndex.data())
+        if rms != 'Model':
+            print('This channel does not use a model, so not showing menu...')
+            return
+        menu = QMenu()
+        action = menu.addAction('Configure Model')
+        action.triggered.connect(self.configureExtModel)
+        menu.exec(self.extTable.mapToGlobal(point))
+
+    def configureExtModel(self):
+        w = ExtModelDialog(self.calibration, self.selectedChannels)
+        if w.exec() != QDialog.Accepted:
+            return
+
+        # Apply dialog settings to selected channels...
+        for channel in self.selectedChannels:
+            bs = w.blockSensitivities(channel.name)
+            channel.setProperty('ModelSensitivities', bs)
+
+        self.processExtSelection()
 
     def maybeShowExtNotices(self):
         if drs.property('isRunning'):
@@ -2962,27 +3429,32 @@ class SettingsWidget(QWidget):
         return mx, msx, my, msy, mz, msz, colors
 
     def update3d(self, channelName, n=100):
-        cpsChannel = data.timeSeries(f'{channelName}_CPS')
-        minSlope = np.min([abs(block.slope(channelName)) for block in self.calibration.blocks])
-        minInt = np.min([block.intercept(channelName) for block in self.calibration.blocks])
-        # cps = slope*ppm + intercept
-        af, _ = calculateRelativeYields()
-        aff = 1./min(af.values()) # To compensate for low yield
-        maxppm = aff*np.nanmax( (cpsChannel.data() - minInt)/(minSlope) )
-        x = np.linspace(cpsChannel.time().min(), cpsChannel.time().max(), n)
-        y = np.linspace(0, maxppm, n)
-        X,Y = np.meshgrid(x,y)
-        Z = self.surface(X,Y)
-        Z = Z.astype(np.float32)
-        self.plot3d.setSurfaceData(Z)        
-        self.plot3d.setXTitle('Time')
-        self.plot3d.setYTitle('Concentration')
-        self.plot3d.setZTitle('Intensity')
-        for ax in ['X1', 'X2', 'X3', 'X4', 'Y1', 'Y2', 'Y3', 'Y4', 'Z1', 'Z2', 'Z3', 'Z4']:
-            self.plot3d.setTickLabels(ax, [0, 1], ['Min', 'Max'])
+        try:
+            cpsChannel = data.timeSeries(f'{channelName}_CPS')
+            minSlope = np.min([abs(block.slope(channelName)) for block in self.calibration.blocks])
+            minInt = np.min([block.intercept(channelName) for block in self.calibration.blocks])
+            # cps = slope*ppm + intercept
+            af, _ = calculateRelativeYields()
+            aff = 1./min(af.values()) # To compensate for low yield
+            maxppm = aff*np.nanmax( (cpsChannel.data() - minInt)/(minSlope) )
+            x = np.linspace(cpsChannel.time().min(), cpsChannel.time().max(), n)
+            y = np.linspace(0, maxppm, n)
+            X,Y = np.meshgrid(x,y)
+            Z = self.surface(X,Y)
+            Z = Z.astype(np.float32)
+            self.plot3d.setSurfaceData(Z)
+            self.plot3d.setXTitle('Time')
+            self.plot3d.setYTitle('Concentration')
+            self.plot3d.setZTitle('Intensity')
+            for ax in ['X1', 'X2', 'X3', 'X4', 'Y1', 'Y2', 'Y3', 'Y4', 'Z1', 'Z2', 'Z3', 'Z4']:
+                self.plot3d.setTickLabels(ax, [0, 1], ['Min', 'Max'])
 
-        self.plot3d.setOrtho(True)
-        self.plot3d.setMeasurementData(*self.compileMeasurementData(channelName, (x.min(), x.max()), (y.min(), y.max()), (Z.min(), Z.max())))
+            self.plot3d.setOrtho(True)
+            self.plot3d.setMeasurementData(*self.compileMeasurementData(channelName, (x.min(), x.max()), (y.min(), y.max()), (Z.min(), Z.max())))
+        except Exception as e:
+            # if there is any problem getting the above data, clear the 3d plot
+            # probably they have not set an external for the selected group
+            self.plot3d.clearData()
 
 
     def processExtSelection(self):                
@@ -3017,16 +3489,23 @@ class SettingsWidget(QWidget):
             print('No blocks. Aborting update!')
             return
 
-
         self.blockPlot.updatePlot()
         self.fitsPlot.updatePlot()
         self.fitParamsPlot.updatePlot()
         self.fracPlot.updatePlot()
         #self.jackPlot.updatePlot()
 
-        self.surface, _ = fitSurface(self.calibration.blocks, channel.name)
-        # fitSurface may have changed the spline type, so update UI here:
-        self.splineTypeComboBox.currentText = drs.setting('SplineType')
+        # Check to make sure we have RM values for this channel
+        extStd = channel.property('External standard')
+        if not self.calibration.blocks[0].dataFrame()[f'{channel.name}_RMppm'].notna().values.any() and extStd != 'Model':
+            self.surface = None
+        elif type(extStd) == str and (extStd.split(',')[0] in data.selectionGroupNames() or extStd == 'Model'):
+            self.surface, _ = fitSurface(self.calibration.blocks, channel.name)
+            # fitSurface may have changed the spline type, so update UI here:
+            self.splineTypeComboBox.currentText = drs.setting('SplineType')
+        else:
+            self.surface = None
+
         self.update3d(channel.name)
 
     def processIntSelection(self):
