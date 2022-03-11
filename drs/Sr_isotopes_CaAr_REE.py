@@ -142,6 +142,7 @@ def runDRS():
     indexChannel = data.timeSeries(settings["IndexChannel"])
     rmName = settings["ReferenceMaterial"]
     maskOption = settings["Mask"]
+    maskMethod  = settings["MaskMethod"]
     maskChannel = data.timeSeries(settings["MaskChannel"])
     cutoff = settings["MaskCutoff"]
     trim = settings["MaskTrim"]
@@ -170,8 +171,13 @@ def runDRS():
     if maskOption:
         drs.message("Making mask...")
         drs.progress(10)
-        mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
+
+        if 'Laser' in maskMethod:
+            mask = drs.createMaskFromLaserLog(trim)
+        else:
+            mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
+
     else:
         mask = np.ones_like(indexChannel.data())
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
@@ -569,6 +575,7 @@ def settingsWidget():
     drs.setSetting("IndexChannel", defaultChannelName)
     drs.setSetting("ReferenceMaterial", "CO3_shell")
     drs.setSetting("Mask", True)
+    drs.setSetting("MaskMethod", 'Laser Log File')
     drs.setSetting("MaskChannel", defaultChannelName)
     drs.setSetting("MaskCutoff", 0.05)
     drs.setSetting("MaskTrim", 0.0)
@@ -608,21 +615,37 @@ def settingsWidget():
     maskCheckBox.toggled.connect(lambda t: drs.setSetting("Mask", bool(t)))
     formLayout.addRow("Mask", maskCheckBox)
 
+    maskMethodComboBox = QtGui.QComboBox(widget)
+    maskMethodComboBox.addItems(['Laser Log File', 'Cutoff Threshold'])
+    maskMethodComboBox.setCurrentText(settings["MaskMethod"])
+    maskMethodComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskMethod", t))
+    maskMethodComboBox.currentTextChanged.connect(lambda t: maskFrame.setVisible(not 'Laser' in drs.settings()['MaskMethod']))
+    formLayout.addRow("Method", maskMethodComboBox)
+
+    maskFrame = QtGui.QFrame(widget)
+    maskLayout = QtGui.QFormLayout()
+    maskFrame.setLayout(maskLayout)
+
     maskComboBox = QtGui.QComboBox(widget)
     maskComboBox.addItems(data.timeSeriesNames(data.Input))
     maskComboBox.setCurrentText(settings["MaskChannel"])
     maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
-    formLayout.addRow("Mask channel", maskComboBox)
+    maskLayout.addRow("Mask channel", maskComboBox)
 
     maskLineEdit = QtGui.QLineEdit(widget)
     maskLineEdit.setText(settings["MaskCutoff"])
     maskLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskCutoff", float(t)))
-    formLayout.addRow("Mask cutoff", maskLineEdit)
+    maskLayout.addRow("Mask cutoff", maskLineEdit)
 
     maskTrimLineEdit = QtGui.QLineEdit(widget)
     maskTrimLineEdit.setText(settings["MaskTrim"])
     maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
-    formLayout.addRow("Mask trim", maskTrimLineEdit)
+    maskLayout.addRow("Mask trim", maskTrimLineEdit)
+
+    # By default, don't show options for setting mask threshold etc
+    maskFrame.setVisible(False)
+
+    formLayout.addWidget(maskFrame)
 
     verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer2)
