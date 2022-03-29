@@ -3,13 +3,50 @@
 #/ Authors: iolite Software
 #/ Description: A basic Rb-Sr isotope DRS, based on that described in Redaa et al. J. Anal. At. Spectrom., 2021, 36, 322
 #/ References: https://doi.org/10.1039/D0JA00299B
-#/ Version: 0.1
+#/ Version: 0.2
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
 import numpy as np
 
 
+'''
+The following functions are for calculating associated results (i.e. error correlations)
+'''
+def Rb87_Sr87_Sr86_error_corr(sel):
+    result = Result()
+
+    try:
+        StdCorr_Sr87s_Sr86s = data.timeSeries("StdCorr_Sr87s_Sr86s")
+        StdCorr_Rb87_Sr86s = data.timeSeries("StdCorr_Rb87_Sr86s")
+    except RuntimeError:
+        return result
+
+    array_1 = StdCorr_Sr87s_Sr86s.dataForSelection(sel)
+    array_2 = StdCorr_Rb87_Sr86s.dataForSelection(sel)
+
+    result.setValue(np.corrcoef(array_1, array_2)[0,1])
+    return result
+
+def Rb87_Sr87_error_corr(sel):
+    result = Result()
+
+    try:
+        Sr87s_Rb87_Raw = data.timeSeries("Sr87s_Rb87_Raw")
+        StdCorr_Rb87_Sr86s = data.timeSeries("StdCorr_Rb87_Sr86s")
+    except RuntimeError:
+        return result
+
+    array_1 = Sr87s_Rb87_Raw.dataForSelection(sel)
+    array_2 = StdCorr_Rb87_Sr86s.dataForSelection(sel)
+
+    result.setValue(np.corrcoef(array_1, array_2)[0,1])
+    return result
+
+
+'''
+Main DRS calculation
+'''
 def runDRS():
 
     drs.message("Starting Rb-Sr isotopes DRS...")
@@ -159,6 +196,10 @@ def runDRS():
     StdCorr_Sr87s_Sr86s = (Sr87s_Sr86s_Raw) * StdValue_Sr87_Sr86 / StdSpline_Sr87s_Sr86s
     data.createTimeSeries('StdCorr_Sr87s_Sr86s', data.Output,
                           indexChannel.time(), StdCorr_Sr87s_Sr86s)
+
+    # Register error correlations:
+    data.registerAssociatedResult("87Rb/86Sr - 87Rb/86Sr Rho", Rb87_Sr87_Sr86_error_corr)
+    data.registerAssociatedResult("87Rb/86Sr - 87Rb/87Sr Rho", Rb87_Sr87_error_corr)
 
     drs.message("Finished!")
     drs.progress(100)
