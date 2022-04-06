@@ -2108,7 +2108,7 @@ class BlockPlot(QWidget):
         externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name])))
         try:
             externalsInUse.remove('Model')
-        except ValueError:
+        except KeyError:
             pass
 
         groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
@@ -2953,6 +2953,7 @@ class DataStatus(Flag):
     NoCPS = auto()
     NoInternalStandard = auto()
     NoExternalStandard = auto()
+    MissingChannelMetadata = auto()
 
 
 class SettingsWidget(QWidget):
@@ -3158,6 +3159,10 @@ class SettingsWidget(QWidget):
         self.intNotice.setCloseButtonVisible(False)
         self.intNotice.hide()
 
+        self.mdNotice = OverlayMessage(self.extTable, 'Warning', 'There is missing metadata for some channels.', 0, 0.8, 40, 10)
+        self.mdNotice.setCloseButtonVisible(False)
+        self.mdNotice.hide()
+
         self.updateStatus()
 
     def updateStatus(self):
@@ -3174,7 +3179,6 @@ class SettingsWidget(QWidget):
             self.status = self.status | DataStatus.NoExternalStandard
         if len(self.internalsInUse()) == 0:
             self.status = self.status | DataStatus.NoInternalStandard
-
         #print(f'Updated status to {self.status}')
         self.maybeShowExtNotices()
 
@@ -3331,6 +3335,11 @@ class SettingsWidget(QWidget):
             self.intNotice.show()
         else:
             self.intNotice.hide()
+
+        if self.status & DataStatus.MissingChannelMetadata:
+            self.mdNotice.show()
+        else:
+            self.mdNotice.hide()
 
     def setupInt(self):
         self.intTable.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -3551,6 +3560,16 @@ class SettingsWidget(QWidget):
 
         self.selectedChannelNames = [c.name for c in self.selectedChannels]
 
+        # Check that all channels have an element set so that it doesn't cause errors below
+        for ch in data.timeSeriesList(data.Input):
+            if ch.name == 'TotalBeam':
+                continue
+            if not ch.property('Element') or len(ch.property('Element')) < 1:
+                print(f"There was an issue with {ch.name}")
+                self.status = self.status | DataStatus.MissingChannelMetadata
+                self.maybeShowExtNotices()
+                return
+
         self.rmMenu.rmsForActiveChannels = []
         for c in self.selectedChannels:
             if c.property('External standard') is not None:
@@ -3575,7 +3594,6 @@ class SettingsWidget(QWidget):
            except RuntimeError:
                self.status = DataStatus.NoRMSelections
                return
-
 
         if len(self.calibration.blocks) == 0:
             print('No blocks. Aborting update!')
