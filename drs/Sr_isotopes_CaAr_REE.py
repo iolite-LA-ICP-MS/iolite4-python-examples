@@ -538,8 +538,8 @@ def runDRS():
         g.setName("fit")
         g.setData(fit_x, fit_y)
 
-        PLOT.left().setLabel('87Sr/86Sr Deviation (meas/true)')
-        PLOT.bottom().setLabel('Total Sr (V)')
+        PLOT.left().label = '87Sr/86Sr Deviation (meas/true)'
+        PLOT.bottom().label = 'Total Sr (V)'
         PLOT.setToolsVisible(False)
         PLOT.rescaleAxes()
         PLOT.replot()
