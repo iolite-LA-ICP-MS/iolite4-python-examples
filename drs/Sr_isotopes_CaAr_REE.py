@@ -568,8 +568,8 @@ def runDRS():
             Slope: {params[1]:.7f} <br>
             Intercept: {params[0]:.6f}</p>'''
 
-        PLOT.left().setLabel('87Sr/86Sr Deviation (meas/true)')
-        PLOT.bottom().setLabel('Total Sr (V)')
+        PLOT.left().label = '87Sr/86Sr Deviation (meas/true)'
+        PLOT.bottom().label = 'Total Sr (V)'
         PLOT.setToolsVisible(False)
         PLOT.rescaleAxes()
         PLOT.replot()

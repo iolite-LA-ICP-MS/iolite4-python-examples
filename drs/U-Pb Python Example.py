@@ -146,8 +146,8 @@ def runDRS():
             g2 = plot.addGraph()
             g2.setColor(QColor(255, 0, 0))
             g2.setData(DHFt, downholeFunc(DHFt, params[0], params[1], params[2], params[3]))
-            plot.left().setLabel(ratio['name'])
-            plot.bottom().setLabel('Time (s)')
+            plot.left().label = ratio['name']
+            plot.bottom().label = 'Time (s)'
             plot.setToolsVisible(False)
             plot.rescaleAxes()
             plot.replot()

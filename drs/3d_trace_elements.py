@@ -3,7 +3,7 @@
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: Trace elements with multiple reference materials
 #/ References: None
-#/ Version: 1.0
+#/ Version: 1.1
 #/ Contact: support@iolite-software.com
 
 """
@@ -76,11 +76,20 @@ colors = {
     for i in range(100)
 }
 
+'''
+Custom Exceptions to help track down issues
+'''
+class NoRMSelectionsError(RuntimeError):
+    pass
+
+
+class MissingRMGroupError(RuntimeError):
+    pass
+
 
 '''
 Block functions and classes
 '''
-
 
 def linear(B, x):
     return B[0]*x + B[1]
@@ -446,7 +455,14 @@ def findBlocks(method=None):
         externalsInUse.remove('Model')
     except:
         pass
-    groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
+
+    # the user may have selected an external that doesn't exist. If so, it will raise a RuntimeError.
+    # That exception should be caught in calling functions
+    try:
+        groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
+    except RuntimeError:
+        raise MissingRMGroupError
+
     selections = list(itertools.chain(*[sg.selections() for sg in groups]))
     selections.sort(key=lambda s: s.midTimeInSec)
     selMidTimes = [s.midTimeInSec for s in selections]
@@ -606,6 +622,9 @@ class Calibration(object):
     def clearFractionationCache(self):
         self.frac = {}
 
+    def clearSurfaceCache(self):
+        self.surfaces = {}
+
     def fractionation(self, name, update=False):
         if name not in self.frac or update:
             print(f"Updating fractionation for {name}")
@@ -658,7 +677,7 @@ class Calibration(object):
         fdf = pd.DataFrame()
 
         for sg in groups: # Loop through each external for this channel
-            for sel in sg.selections(): # Loop through each selection of each groupo
+            for sel in sg.selections(): # Loop through each selection of each group
                 for isElements in isElementsList: # Collect ratio data for each of the IS combinations in use
                     try:
                         selPPMSum, rmPPMSum = sumsForSel(sel, isElements)
@@ -1235,8 +1254,8 @@ class ExternalsModel(QAbstractTableModel):
     def setData(self, index, value, role = Qt.EditRole):
         if role == Qt.CheckStateRole and index.column() == 3:
             self.channels[index.row()].setProperty('FitThroughZero', value == Qt.Checked)
-            self.dataChanged.emit(index, index)
             self.throughZeroChanged.emit()
+            self.dataChanged.emit(index, index)
         if role == Qt.CheckStateRole and index.column() == 4:
             self.channels[index.row()].setProperty('FractionationCorrection', value == Qt.Checked)
             ft = self.channels[index.row()].property('FractionationFitType')
@@ -1273,7 +1292,6 @@ class ExternalsDelegate(QStyledItemDelegate):
         return QStyledItemDelegate.createEditor(self, parent, option, index)
 
     def setEditorData(self, editor, index):
-        print(f'setEditorData {editor} {index} {index.data()}')
         if index.column() == 1:
             editor.clear()
             editor.addItem(index.data(Qt.UserRole).property('External standard'))
@@ -1289,6 +1307,10 @@ class ExternalsDelegate(QStyledItemDelegate):
         elif index.column() == 4:
             index.data(Qt.UserRole).setProperty('FractionationCorrection', 'None' != editor.currentText)
             index.data(Qt.UserRole).setProperty('FractionationFitType', editor.currentText)
+        try:
+            model.sourceModel.dataChanged.emit(index, index)
+        except:
+            model.dataChanged.emit(index, index)
 
 
 class ReferenceMaterialComboBox(QComboBox):
@@ -1935,6 +1957,9 @@ class BlockAssignmentsModel(QAbstractTableModel):
             blockIndex = None
 
         if role == Qt.BackgroundColorRole:
+            if not blockIndex:
+                return None
+
             return colors[blockIndex]
 
         if role == Qt.DecorationRole and index.column() == 3:
@@ -2081,6 +2106,11 @@ class BlockPlot(QWidget):
         table.setSelectionBehavior(table.SelectRows)
 
         externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name])))
+        try:
+            externalsInUse.remove('Model')
+        except KeyError:
+            pass
+
         groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
         selections = list(itertools.chain(*[sg.selections() for sg in groups]))
         selections.sort(key=lambda s: s.midTimeInSec)
@@ -2113,13 +2143,14 @@ class BlockPlot(QWidget):
         update()
 
         def setBlocks():
-            block = QInputDialog.getInt(d, 'Block number', 'Block number:', 0, 0, 100, 1)
+            block = QInputDialog.getInt(d, 'Block number', 'Block number:', 1, 0, 100, 1)
 
             if block is None:
                 return
 
             sels = [index.data(Qt.UserRole) for index in table.selectionModel().selectedRows()]
             for sel in sels:
+                print(f'Setting block number for {sel.name} to {block}')
                 sel.setProperty('Block', block)
 
             update()
@@ -2315,9 +2346,6 @@ class BlockPlot(QWidget):
         else:    
             self.plot.bottom().range = QCPRange(0, self.x_max*1.1)
             self.plot.left().range = QCPRange(0, self.y_max * 1.1)
-
-        print(f'self.y_max BEFORE: {self.y_max * 1.1}')
-        print(f'left axis max: {self.plot.left().range.upper()}')
 
         self.plot.setLegendVisible(self.showLegend)
         self.plot.setLegendAlignment(Qt.AlignBottom | Qt.AlignRight)
@@ -2655,7 +2683,7 @@ class ExtModelDialog(QDialog):
         self.selectedChannels = selectedChannels
         self.blockSplines = {}
         try:
-            self.setWindowTitle(f'Sensitivity model for channel {self.selectedChannels[0].name}')
+            self.setWindowTitle(f"Sensitivity model for {', '.join([ch.name for ch in self.selectedChannels])}")
         except:
             pass
 
@@ -2666,9 +2694,11 @@ class ExtModelDialog(QDialog):
         leftWidget.setFixedWidth(225)
         leftWidget.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().addLayout(mainLayout)
+
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        bb.accepted.connect(self.accept)
+        bb.accepted.connect(self.checkAndAccept)  #Can't exit Dialog without setting abundance.
         bb.rejected.connect(self.reject)
+
         self.layout().addWidget(bb)
         self.channelsTable = QTableWidget(self)
         self.allChannels = [c.name for c in data.timeSeriesList(data.Input) if 'Total' not in c.name]
@@ -2757,6 +2787,23 @@ class ExtModelDialog(QDialog):
 
         self.updatePlot()
 
+
+    def checkAndAccept(self):
+        #Check that selected channels have an abudance set:
+        for ch in self.selectedChannels:
+            item = self.channelsTable.item(
+                self.channelsTable.findItems(ch.name, Qt.MatchExactly)[0].row(), 1)
+            if float(item.text()) < 0.000001:
+                self.abunNotice = OverlayMessage(self.plot,
+                                                 'Error',
+                                                 f'Please set the isotopic abundance of {ch.name} before closing this dialog',
+                                                 3, 0.8, 40, 50)
+                self.abunNotice.setCloseButtonVisible(False)
+                self.abunNotice.show()
+                return
+
+        self.accept()
+
     def toggleLegend(self, b):
         self.showLegend = b
         # Get axis ranges so that toggling the legend doesn't reset zoom
@@ -2819,7 +2866,7 @@ class ExtModelDialog(QDialog):
         # changes any of the isotopic abundances in the table. So, can't put main plotting in __init__() for example
         for bi, block in enumerate(self.calibration.blocks):
             block_graph = self.plot.addGraph()
-            block_graph.setName(f"Block {bi}")
+            block_graph.setName(f"Block {bi + 1}")
             channelSens = np.array([sensForChannel(block, cn) for cn in self.allChannels], dtype=np.float) / channelAbundances
             block_graph.setData(channelMasses[np.isfinite(channelSens)], channelSens[np.isfinite(channelSens)])
             color = self.colorGrad.color(bi, 0, len(self.calibration.blocks))
@@ -2906,6 +2953,7 @@ class DataStatus(Flag):
     NoCPS = auto()
     NoInternalStandard = auto()
     NoExternalStandard = auto()
+    MissingChannelMetadata = auto()
 
 
 class SettingsWidget(QWidget):
@@ -3102,9 +3150,18 @@ class SettingsWidget(QWidget):
         self.extNotice.addButton(self.blsButton)
         self.extNotice.hide()
 
+        self.noSelsNotice = OverlayMessage(self.extTable, 'Warning', 'There are no selections for one of the External Standards',
+                                           0, 0.8, 40, 10)
+        self.noSelsNotice.setCloseButtonVisible(False)
+        self.noSelsNotice.hide()
+
         self.intNotice = OverlayMessage(self.intTable, 'Warning', 'Elements and values must be specified for > 0 selections.', 0, 0.8, 40, 10)
         self.intNotice.setCloseButtonVisible(False)
         self.intNotice.hide()
+
+        self.mdNotice = OverlayMessage(self.extTable, 'Warning', 'There is missing metadata for some channels.', 0, 0.8, 40, 10)
+        self.mdNotice.setCloseButtonVisible(False)
+        self.mdNotice.hide()
 
         self.updateStatus()
 
@@ -3122,7 +3179,6 @@ class SettingsWidget(QWidget):
             self.status = self.status | DataStatus.NoExternalStandard
         if len(self.internalsInUse()) == 0:
             self.status = self.status | DataStatus.NoInternalStandard
-
         #print(f'Updated status to {self.status}')
         self.maybeShowExtNotices()
 
@@ -3168,6 +3224,7 @@ class SettingsWidget(QWidget):
         groupNames = list(itertools.chain(*[str(self.extModel.index(r, 1).data()).split(',') for r in range(self.extModel.rowCount())]))
         groupNames = list(set(groupNames))
         try:
+            groupNames.remove('Model')
             groupNames.remove('None')
         except:
             pass
@@ -3213,6 +3270,8 @@ class SettingsWidget(QWidget):
         self.setExtButton.setIcon(CUI().icon('trophy'))
         self.setExtButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
+        self.extModel.dataChanged.connect(lambda a: self.updateAffected())
+
         self.extModel.dataChanged.connect(lambda a: self.updateBlocks())
         self.extTable.selectionModel().selectionChanged.connect(self.processExtSelection)
         self.rmMenu.rmsChanged.connect(self.extModel.updateData)
@@ -3239,7 +3298,13 @@ class SettingsWidget(QWidget):
         menu.exec(self.extTable.mapToGlobal(point))
 
     def configureExtModel(self):
-        w = ExtModelDialog(self.calibration, self.selectedChannels)
+        try:
+            w = ExtModelDialog(self.calibration, self.selectedChannels)
+        except MissingRMGroupError:
+            self.status = DataStatus.NoRMSelections
+            self.maybeShowExtNotices()
+            return
+
         if w.exec() != QDialog.Accepted:
             return
 
@@ -3261,10 +3326,20 @@ class SettingsWidget(QWidget):
         else:
             self.extNotice.hide()
 
+        if self.status & DataStatus.NoRMSelections:
+            self.noSelsNotice.show()
+        else:
+            self.noSelsNotice.hide()
+
         if self.status & DataStatus.NoInternalStandard and drs.setting('UseIntStds'):
             self.intNotice.show()
         else:
             self.intNotice.hide()
+
+        if self.status & DataStatus.MissingChannelMetadata:
+            self.mdNotice.show()
+        else:
+            self.mdNotice.hide()
 
     def setupInt(self):
         self.intTable.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -3399,7 +3474,11 @@ class SettingsWidget(QWidget):
                 print('   ... because there are no externals in use.')
 
         if self.blockRMs != self.externalsInUse():            
-            self.calibration.updateBlocks()
+            try:
+                self.calibration.updateBlocks()
+            except MissingRMGroupError:
+                return
+
             self.blockRMs = self.externalsInUse()
 
     def compileMeasurementData(self, channelName, ex, ey, ez):
@@ -3456,13 +3535,40 @@ class SettingsWidget(QWidget):
             # probably they have not set an external for the selected group
             self.plot3d.clearData()
 
+    def updateAffected(self):
+        # If one of the channels modified is part of an IS we also need to
+        # clear all the stored fractionation and surface caches
+        selectedNames = [sr.data(Qt.UserRole).name for sr in self.extTable.selectionModel().selectedRows()]
+        print(f'Update Affected {selectedNames}')
+        if any(name in ''.join(self.internalsInUse()) for name in selectedNames):
+            print('... clearing caches!')
+            self.calibration.clearFractionationCache()
+            self.calibration.clearSurfaceCache()
 
-    def processExtSelection(self):                
+        [self.calibration.updateSurface(name) for name in selectedNames]
+
+        try:
+            [self.calibration.updateFractionation(name) for name in selectedNames]
+        except RuntimeError:
+            return
+
+
+    def processExtSelection(self):
         self.selectedChannels = [sr.data(Qt.UserRole) for sr in self.extTable.selectionModel().selectedRows()]
         if not self.selectedChannels:
             self.selectedChannels = [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]
 
         self.selectedChannelNames = [c.name for c in self.selectedChannels]
+
+        # Check that all channels have an element set so that it doesn't cause errors below
+        for ch in data.timeSeriesList(data.Input):
+            if ch.name == 'TotalBeam':
+                continue
+            if not ch.property('Element') or len(ch.property('Element')) < 1:
+                print(f"There was an issue with {ch.name}")
+                self.status = self.status | DataStatus.MissingChannelMetadata
+                self.maybeShowExtNotices()
+                return
 
         self.rmMenu.rmsForActiveChannels = []
         for c in self.selectedChannels:
@@ -3483,7 +3589,11 @@ class SettingsWidget(QWidget):
             self.modelComboBox.setCurrentText(model)
 
         if len(self.calibration.blocks) == 0:
-            self.updateBlocks()
+           try:
+               self.updateBlocks()
+           except RuntimeError:
+               self.status = DataStatus.NoRMSelections
+               return
 
         if len(self.calibration.blocks) == 0:
             print('No blocks. Aborting update!')
@@ -3594,6 +3704,8 @@ class SettingsWidget(QWidget):
 
         for channel in channels:
             channel.setProperty('FitThroughZero', b)
+
+        self.updateAffected()
 
         self.processExtSelection()
         self.extFilterModel.invalidate()
