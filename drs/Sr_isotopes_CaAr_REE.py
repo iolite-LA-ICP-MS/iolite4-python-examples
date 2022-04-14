@@ -197,6 +197,12 @@ def runDRS():
         drs.progress(100)
         drs.finished()
         return
+    elif len(data.selectionGroupList(data.Baseline)) < 1:
+        IoLog.error("No baseline groups found. Have you selected baselines yet?")
+        drs.message("DRS did not finish. Please check Messages")
+        drs.progress(100)
+        drs.finished()
+        return
     else:
         blGrp = data.selectionGroupList(data.Baseline)[0]
 
@@ -225,7 +231,11 @@ def runDRS():
     SrCaArErYb84 = data.timeSeriesByMass(data.Intermediate, 84, 0.1).data()
     Er83_5 = data.timeSeriesByMass(data.Intermediate, 83.5, 0.1).data()
     CaArEr83 = data.timeSeriesByMass(data.Intermediate, 83, 0.1).data()
-    CaArErDy82 = data.timeSeriesByMass(data.Intermediate, 82, 0.1).data()
+    try:
+        CaArErDy82 = data.timeSeriesByMass(data.Intermediate, 82, 0.1).data()
+    except RuntimeError:
+        CaArErDy82 = np.zeros_like(Er83_5)
+
 
     '''
     Note that the following is not baseline subtracted as it is intended to be used as a
