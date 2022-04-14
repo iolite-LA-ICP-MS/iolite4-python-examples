@@ -12,7 +12,7 @@ from iolite.Qt import Qt, QColor
 from iolite.ui import CommonUIPyInterface as CUI
 from iolite.ui import IolitePlotPyInterface as Plot
 from iolite.ui import IolitePlotSettingsDialog as PlotSettings
-from iolite.QtGui import QAction
+from iolite.QtGui import QAction, QPen
 from iolite.types import Result
 
 from scipy.optimize import curve_fit
@@ -38,6 +38,10 @@ except:
     PLOT = Plot()
     PLOT.setAttribute(Qt.WA_DeleteOnClose)
     PLOT.setFixedSize(500,400)
+
+    # Add annotation to show fit parameters
+    ann = PLOT.annotate('', 0.01, 0.951, 'ptAxisRectRatio', Qt.AlignLeft | Qt.AlignBottom)
+    ann.visible = False
 
     def showSettings():
         d = PlotSettings(PLOT)
@@ -97,6 +101,11 @@ PLOT_COLORS = [
     QColor(6, 214, 160),    # Green
     QColor(17, 138, 178),   # Blue
     QColor(7, 59, 76),      # Midnight Green
+    QColor(204, 245, 172),  # Light Green
+    QColor(128, 138, 159),  # Roman Silver
+    QColor(61, 43, 86),     # Russian Purple
+    QColor(247, 169, 168),  # Pastel Pink
+    QColor(207, 212, 197),  # Bone
 ]
 
 
@@ -142,7 +151,6 @@ def runDRS():
     indexChannel = data.timeSeries(settings["IndexChannel"])
     rmName = settings["ReferenceMaterial"]
     maskOption = settings["Mask"]
-    maskMethod  = settings["MaskMethod"]
     maskChannel = data.timeSeries(settings["MaskChannel"])
     cutoff = settings["MaskCutoff"]
     trim = settings["MaskTrim"]
@@ -171,13 +179,8 @@ def runDRS():
     if maskOption:
         drs.message("Making mask...")
         drs.progress(10)
-
-        if 'Laser' in maskMethod:
-            mask = drs.createMaskFromLaserLog(trim)
-        else:
-            mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
+        mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
-
     else:
         mask = np.ones_like(indexChannel.data())
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
@@ -472,7 +475,6 @@ def runDRS():
         groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
         data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
 
-
     # CaPO Plot and Correction
     if len(settings['CaPO_RMs']) > 0:
         print("Here are the RMs for CaPO correction:", settings['CaPO_RMs'])
@@ -493,14 +495,19 @@ def runDRS():
             try:
                 sg = data.selectionGroup(rm)
             except RuntimeError as err:
-                IoLog.warning(f"Could not get the selections for group {rm}: {err}")
+                print(f"Could not get the selections for group {rm} so it could not be used in the CaPO correction: {err}")
+                IoLog.warning(f"Could not get the selections for group {rm} so it could not be used in the CaPO correction: {err}")
                 continue
 
             try:
                 true = data.referenceMaterialData(rm)['87Sr/86Sr'].value()
             except KeyError as err:
-                IoLog.warning(f"Could not get the \'87Sr/86Sr\' value for {rm}: {err}")
+                print(f"Could not get the \'87Sr/86Sr\' value for {rm} so it could not be used in the CaPO correction: {err}")
+                IoLog.warning(f"Could not get the \'87Sr/86Sr\' value for {rm} so it could not be used in the CaPO correction: {err}")
                 continue
+
+            print(rm)
+            print(true)
 
             for sel in sg.selections():
                 meas = data.result(sel, Sr8786).value()
@@ -515,34 +522,75 @@ def runDRS():
             g.setScatterStyle('ssDisc', 6.0, PLOT_COLORS[i])
             g.setData(np.array(sigs), np.array(devs))
 
-        # Now add fit to all data
-        def fitFunc(t, a, b):
-            return a + b*t
 
-        # Fit a curve to the raw downhole data
+
         sigs_array = np.array(sigs_main)
         devs_array = np.array(devs_main)
-        params, cov = curve_fit(fitFunc, sigs_array, devs_array, ftol=1e-5)
-        print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
-
+        #
         # Show the fit +/- 10% of the spread in signals
         sigs_range = sigs_array.max() - sigs_array.min()
         fit_x = np.linspace(
             sigs_array.min() - sigs_range * 0.1,
-            sigs_array.max() + sigs_range * 0.1 ,
-            10
+            sigs_array.max() + sigs_range * 0.1,
+            50
         )
-        fit_y = params[1]*fit_x + params[0]
+
+        # Now add fit to all data
+        if settings["CaPOEqType"] == 'Linear':
+            def fitFunc(x, a, b):
+                return a + b*x
+
+            params, cov = curve_fit(fitFunc, sigs_array, devs_array, ftol=1e-5)
+
+            print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
+            fit_y = params[1]*fit_x + params[0]
+
+        if settings["CaPOEqType"] == 'Exponential Decay':
+            def f(x, a, b, c):
+                return a + b * np.exp(-c * x)
+
+            params, cov = curve_fit(f, sigs_array, devs_array)
+            print(f"Here are the fit params: {params}")
+
+            fit_y = params[0] + params[1] * np.exp(-params[2] * fit_x)
 
         g = PLOT.addGraph()
         g.setName("fit")
+        fit_pen = QPen(QColor('dark grey'))
+        fit_pen.setStyle(Qt.DashLine);
+        g.pen = fit_pen
         g.setData(fit_x, fit_y)
+
+        ann.visible = True
+        ann.text = f'''
+            <p style="color:black;">
+            <b>Fit Parameters:</b><br>
+            Slope: {params[1]:.7f} <br>
+            Intercept: {params[0]:.6f}</p>'''
 
         PLOT.left().setLabel('87Sr/86Sr Deviation (meas/true)')
         PLOT.bottom().setLabel('Total Sr (V)')
         PLOT.setToolsVisible(False)
         PLOT.rescaleAxes()
         PLOT.replot()
+
+        if settings['CaPOEqType'] == 'Linear':
+            CaPO_corrAmt = TotalSrBeam * params[1] + params[0]
+        else:
+            CaPO_corrAmt = params[0] + params[1] * np.exp(-params[2] * TotalSrBeam)
+
+        data.createTimeSeries('CaPO_corrAmt', data.Output, indexChannel.time(), CaPO_corrAmt)
+
+        CaPOCorr_Sr8786 = StdCorr_Sr8786 / CaPO_corrAmt
+        data.createTimeSeries('CaPOCorr_Sr8786', data.Output, indexChannel.time(), CaPOCorr_Sr8786)
+
+
+    else:
+        print("No CaPO correction invoked (no selected RMs)")
+        PLOT.clearGraphs()
+        ann.visible = False
+        PLOT.replot()
+
 
     data.registerAssociatedResult("Corr_Sr8786_Sr88_V", getSelRatioIntensityCorr)
 
@@ -570,12 +618,10 @@ def settingsWidget():
     elif timeSeriesNames:
         defaultChannelName = timeSeriesNames[0]
 
-    rmNames = data.selectionGroupNames(data.ReferenceMaterial)
 
     drs.setSetting("IndexChannel", defaultChannelName)
     drs.setSetting("ReferenceMaterial", "CO3_shell")
     drs.setSetting("Mask", True)
-    drs.setSetting("MaskMethod", 'Laser Log File')
     drs.setSetting("MaskChannel", defaultChannelName)
     drs.setSetting("MaskCutoff", 0.05)
     drs.setSetting("MaskTrim", 0.0)
@@ -586,6 +632,7 @@ def settingsWidget():
     drs.setSetting("CaArBias", 0.)
     drs.setSetting("Sr88_86_reference", 8.37520938)  #Konter & Storm (2014)
     drs.setSetting("Rb87_85_reference", 0.385710)    #Konter & Storm (2014)
+    drs.setSetting("CaPOEqType", 'Linear')
     drs.setSetting("CaPO_RMs", [])
 
     drs.setSetting("PropagateError", False)
@@ -598,7 +645,15 @@ def settingsWidget():
     indexComboBox.textActivated.connect(lambda t: drs.setSetting("IndexChannel", t))
     formLayout.addRow("Index channel", indexComboBox)
 
+    def updateIndexCombo():
+        timeSeriesNames = data.timeSeriesNames(data.Input)
+        indexComboBox.clear()
+        indexComboBox.addItems(timeSeriesNames)
+
+    data.dataChanged.connect(updateIndexCombo)
+
     rmComboBox = QtGui.QComboBox(widget)
+    rmNames = data.selectionGroupNames(data.ReferenceMaterial)
     rmComboBox.addItems(rmNames)
     if settings["ReferenceMaterial"] in rmNames:
         rmComboBox.setCurrentText(settings["ReferenceMaterial"])
@@ -606,6 +661,13 @@ def settingsWidget():
 
     rmComboBox.textActivated.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
     formLayout.addRow("Reference material", rmComboBox)
+
+    def updateRMCombo():
+        rmNames = data.selectionGroupNames(data.ReferenceMaterial)
+        rmComboBox.clear()
+        rmComboBox.addItems(rmNames)
+
+    data.selectionGroupsChanged.connect(updateRMCombo)
 
     verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer)
@@ -615,37 +677,21 @@ def settingsWidget():
     maskCheckBox.toggled.connect(lambda t: drs.setSetting("Mask", bool(t)))
     formLayout.addRow("Mask", maskCheckBox)
 
-    maskMethodComboBox = QtGui.QComboBox(widget)
-    maskMethodComboBox.addItems(['Laser Log File', 'Cutoff Threshold'])
-    maskMethodComboBox.setCurrentText(settings["MaskMethod"])
-    maskMethodComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskMethod", t))
-    maskMethodComboBox.currentTextChanged.connect(lambda t: maskFrame.setVisible(not 'Laser' in drs.settings()['MaskMethod']))
-    formLayout.addRow("Method", maskMethodComboBox)
-
-    maskFrame = QtGui.QFrame(widget)
-    maskLayout = QtGui.QFormLayout()
-    maskFrame.setLayout(maskLayout)
-
     maskComboBox = QtGui.QComboBox(widget)
     maskComboBox.addItems(data.timeSeriesNames(data.Input))
     maskComboBox.setCurrentText(settings["MaskChannel"])
     maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
-    maskLayout.addRow("Mask channel", maskComboBox)
+    formLayout.addRow("Mask channel", maskComboBox)
 
     maskLineEdit = QtGui.QLineEdit(widget)
     maskLineEdit.setText(settings["MaskCutoff"])
     maskLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskCutoff", float(t)))
-    maskLayout.addRow("Mask cutoff", maskLineEdit)
+    formLayout.addRow("Mask cutoff", maskLineEdit)
 
     maskTrimLineEdit = QtGui.QLineEdit(widget)
     maskTrimLineEdit.setText(settings["MaskTrim"])
     maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
-    maskLayout.addRow("Mask trim", maskTrimLineEdit)
-
-    # By default, don't show options for setting mask threshold etc
-    maskFrame.setVisible(False)
-
-    formLayout.addWidget(maskFrame)
+    formLayout.addRow("Mask trim", maskTrimLineEdit)
 
     verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer2)
@@ -685,6 +731,13 @@ def settingsWidget():
     rb87_85_refLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb87_85_reference", float(t)))
     formLayout.addRow("Reference Rb87/Rb85 value", rb87_85_refLineEdit)
 
+    # CaPO controls
+    capoEqType = QtGui.QComboBox(widget)
+    capoEqType.addItems(['Linear', 'Exponential Decay'])
+    capoEqType.setCurrentText(settings["CaPOEqType"])
+    capoEqType.currentTextChanged.connect(lambda t: drs.setSetting("CaPOEqType", t))
+    formLayout.addRow("Mask channel", capoEqType)
+
     setExtButton = QtGui.QToolButton(widget)
     rmMenu = ReferenceMaterialsMenu(setExtButton)
     rmMenu.rmsChanged.connect(lambda l: drs.setSetting("CaPO_RMs", l))
@@ -694,6 +747,7 @@ def settingsWidget():
     setExtButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
     formLayout.addRow("RMs for CaPO correction:", setExtButton)
 
+    # Prop errors controls
     propCheckBox = QtGui.QCheckBox(widget)
     propCheckBox.setChecked(settings["PropagateError"])
     propCheckBox.toggled.connect(lambda t: drs.setSetting("PropagateError", bool(t)))
