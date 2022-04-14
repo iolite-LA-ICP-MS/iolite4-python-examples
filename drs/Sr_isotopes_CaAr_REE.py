@@ -746,7 +746,7 @@ def settingsWidget():
     capoEqType.addItems(['Linear', 'Exponential Decay'])
     capoEqType.setCurrentText(settings["CaPOEqType"])
     capoEqType.currentTextChanged.connect(lambda t: drs.setSetting("CaPOEqType", t))
-    formLayout.addRow("Mask channel", capoEqType)
+    formLayout.addRow("CaPO Fit Eqn", capoEqType)
 
     setExtButton = QtGui.QToolButton(widget)
     rmMenu = ReferenceMaterialsMenu(setExtButton)
