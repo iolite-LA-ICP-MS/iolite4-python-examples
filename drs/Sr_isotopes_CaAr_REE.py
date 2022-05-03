@@ -142,7 +142,6 @@ def runDRS():
     indexChannel = data.timeSeries(settings["IndexChannel"])
     rmName = settings["ReferenceMaterial"]
     maskOption = settings["Mask"]
-    maskMethod  = settings["MaskMethod"]
     maskChannel = data.timeSeries(settings["MaskChannel"])
     cutoff = settings["MaskCutoff"]
     trim = settings["MaskTrim"]
@@ -150,6 +149,7 @@ def runDRS():
     RbBias = settings["RbBias"]
     CaArBias = settings["CaArBias"]
     propErrors = settings["PropagateError"]
+    corrections = settings["Corrections"]
 
     # Create debug messages for the settings being used
     IoLog.debug("indexChannelName = %s" % indexChannel.name)
@@ -161,6 +161,7 @@ def runDRS():
     IoLog.debug("RbBias = %f" % RbBias)
     IoLog.debug("CaArBias = %f" % CaArBias)
     IoLog.debug("PropagateErrors = True" if propErrors else "PropagateErrors = False")
+    IoLog.debug("Corrections selected: " + corrections)
 
     # Setup index time
     drs.message("Setting up index time...")
@@ -171,13 +172,8 @@ def runDRS():
     if maskOption:
         drs.message("Making mask...")
         drs.progress(10)
-
-        if 'Laser' in maskMethod:
-            mask = drs.createMaskFromLaserLog(trim)
-        else:
-            mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
+        mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
-
     else:
         mask = np.ones_like(indexChannel.data())
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
@@ -187,6 +183,13 @@ def runDRS():
 
     allInputChannels = data.timeSeriesList(data.Input)
     blGrp = None
+
+    if len(data.selectionGroupList(data.Baseline)) < 1:
+        IoLog.error("Could not find a baseline group. Combined Sr DRS cannot proceed...")
+        drs.message("Please select some baseline selections")
+        drs.progress(100)
+        drs.finished()
+        return
 
     if len(data.selectionGroupList(data.Baseline)) > 1:
         IoLog.error("There are more than one baseline groups. Combined Sr DRS cannot proceed...")
@@ -199,30 +202,35 @@ def runDRS():
 
     drs.baselineSubtract(blGrp, allInputChannels, mask, 15, 35)
 
-    drs.message("Checking for half masses...")
-    drs.progress(35)
-
-    try:
-        Yb86_5 = data.timeSeriesByMass(data.Intermediate, 86.5, 0.1).data()
-    except IndexError:
-        IoLog.error("Could not find half masses. Combined Sr DRS could not proceed...")
-        drs.message("DRS did not finish. Please check Messages")
-        drs.progress(100)
-        drs.finished()
-        return
-
-    #Y89 = data.timeSeriesList(data.Intermediate, {'Mass': '89'})[0].data()
+    '''
+    The following channels names include the REE interferences but
+    we won't be correcting for REE unless the user selects CaAr+REE.
+    The names are common to both correction profiles
+    '''
     SrCaArYbLu88 = data.timeSeriesByMass(data.Intermediate, 88, 0.1).data()
-    #Lu87_5 = data.timeSeriesList(data.Intermediate, {'Mass': '87.5'})[0].data()
     SrRbYb87 = data.timeSeriesByMass(data.Intermediate, 87, 0.1).data()
-    Yb86_5 = data.timeSeriesByMass(data.Intermediate, 86.5, 0.1).data()
     SrCaArYb86 = data.timeSeriesByMass(data.Intermediate, 86, 0.1).data()
     RbYbEr85 = data.timeSeriesByMass(data.Intermediate, 85, 0.1).data()
-    #Tm84_5 = data.timeSeriesByMass(data.Intermediate, 84.5, 0.1).data()
     SrCaArErYb84 = data.timeSeriesByMass(data.Intermediate, 84, 0.1).data()
-    Er83_5 = data.timeSeriesByMass(data.Intermediate, 83.5, 0.1).data()
     CaArEr83 = data.timeSeriesByMass(data.Intermediate, 83, 0.1).data()
     CaArErDy82 = data.timeSeriesByMass(data.Intermediate, 82, 0.1).data()
+
+    #Set up other channels depended on corrections used:
+    if 'REE' in corrections:
+        drs.message("Checking for half masses...")
+        drs.progress(35)
+
+        try:
+            Yb86_5 = data.timeSeriesByMass(data.Intermediate, 86.5, 0.1).data()
+        except IndexError:
+            IoLog.error("Could not find half masses. Combined Sr DRS could not proceed...")
+            drs.message("DRS did not finish. Please check Messages")
+            drs.progress(100)
+            drs.finished()
+            return
+
+        Yb86_5 = data.timeSeriesByMass(data.Intermediate, 86.5, 0.1).data()
+        Er83_5 = data.timeSeriesByMass(data.Intermediate, 83.5, 0.1).data()
 
     '''
     Note that the following is not baseline subtracted as it is intended to be used as a
@@ -234,87 +242,115 @@ def runDRS():
     drs.progress(40)
 
     Sr88_86_reference = settings['Sr88_86_reference']
-    Dy_Er = settings['Dy_Er']
-    Lu_Yb = settings['Lu_Yb']
-
     PFract = (np.log(Sr88_86_reference / (SrCaArYbLu88/SrCaArYb86))) / (np.log(87.9056/85.9093))*mask
 
-    # The following equations subtract CaAr using the signal on 82, itself corrected for REE2+ using the
-    # Er83_5 signal and canonical Dy/Er (because we don't measure Dy on a half mass).
-    # The default value of Dy_Er is 1.8
-    Er82 = (Er83_5 * 1.601 / 22.869) / np.power((81.96460 / 83.46619), PFract)
-    Dy82 = Er82 / (1.601 / 100.) * Dy_Er * (28.260 / 100.)
-    CaAr82 = CaArErDy82 - Er82 - Dy82
+    if not 'REE' in corrections:
+        PCaAr86 = (CaArErDy82 * .004 / .647) / np.power((85.9160721 / 81.9210049), PFract)
+        PSr86 = SrCaArYb86 - PCaAr86
+        PCaAr88 = (CaArErDy82 * .187 / .647) / np.power((87.9149151 / 81.9210049), PFract)
+        PSr88 = SrCaArYbLu88 - PCaAr88
 
-    # Now correct mass 86 for CaAr using CaAr82, and correct for 172Yb2+ using 173Yb2+ (measured on mass 86.5)
-    CaAr86 = (CaAr82 * .004 / .647) / np.power((85.9160721 / 81.9210049), PFract)
-    Yb86 = (Yb86_5 * 21.68 / 16.103) / np.power((85.968195 / 86.46911), PFract)
-    PSr86 = SrCaArYb86 - CaAr86 - Yb86
+        BetaSr = (np.log(Sr88_86_reference / (PSr88/PSr86))) / (np.log(87.9056/85.9093))
 
-    # Now correct mass 88 for CaAr using CaAr82, and correct for 176Yb2+ using 173Yb2+ (measured on mass 86.5)
-    # and 176Lu2+ using 173Yb2+ and applying the same Dy_Er ratio
-    CaAr88 = (CaAr82 * .187 / .647) / np.power((87.9149151 / 81.9210049), PFract)
-    Yb88 = (Yb86_5 * 12.996 / 16.103) / np.power((87.97129 / 86.46911), PFract)
-    Lu88 = Yb88 / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
-    PSr88 = SrCaArYbLu88 - CaAr88 - Yb88 - Lu88
+        # Calculate Rb on mass 87
+        BetaRb = BetaSr + settings['RbBias']
+        Rb87_85_reference = settings['Rb87_85_reference']
+        Rb87 = RbYbEr85 * Rb87_85_reference / np.power((86.90918 / 84.9118), BetaRb)
 
-    # Use these CaAr and REE stripped Sr 86 and Sr 88 values to calculate a refined fractionation factor
-    BetaSr = (np.log(Sr88_86_reference / (PSr88 / PSr86))) / (np.log(87.9056/85.9093))
+        Sr87_c = SrRbYb87 - Rb87
 
-    # You might notice that a lot of the following equations look the same as those above,
-    # but just using `BetaSr` fractionation factor instead of `PFract` fractionation factor
+        BetaCaAr = BetaSr + settings['CaArBias']
+        CaAr84 = CaArErDy82 * 2.086/0.647 / np.power((83.917989 / 81.921122), BetaCaAr)
+        Sr84_c = SrCaArErYb84 - CaAr84
 
-    # Calculate Rb fractionation factor, with optional adjustment
-    BetaRb = BetaSr + settings['RbBias']
+        CaAr88 = CaArErDy82 * .187 / .647 / np.power((87.9149151 / 81.9210049), BetaSr)
+        Sr88_c = SrCaArYbLu88 - CaAr88
 
-    # Correct mass 85 for 170Yb2+ using 173Yb2+ (measured on mass 86.5) and 170Er2+ using 167Er2+ (measured on mass 83.5)
-    Yb85 =  Yb86_5 * 2.982 / 16.103 / np.power((84.967385 / 86.46911), BetaSr)
-    Er85 = Er83_5 * 14.910 / 22.869 / np.power((84.96774 / 83.46619), BetaSr)
-    Rb85_c = RbYbEr85 - Yb85 - Er85
-    # Calculate Rb on mass 87
-    Rb87_85_reference = settings['Rb87_85_reference']
-    Rb87 = Rb85_c * Rb87_85_reference / np.power((86.90918 / 84.9118), BetaRb)
+        CaAr86 = CaArErDy82 * .004 / .647 / np.power((85.9160721 / 81.9210049), BetaSr)
+        Sr86_c = SrCaArYb86 - CaAr86
 
-    # Subtract this Rb87 amount from the 87 beam, along with 174Yb2+ (calculated from
-    # 173Yb2++, on mass 86.5), to get Sr87
-    Yb87 = Yb86_5 * 32.026 / 16.103 / np.power((86.96943 / 86.46911), BetaSr)
-    Sr87_c = SrRbYb87 - Rb87 - Yb87
+    if 'REE' in corrections:
+        Dy_Er = settings['Dy_Er']
+        Lu_Yb = settings['Lu_Yb']
 
-    # Calculate unique CaAr fractionation factor relative to Sr fract.
-    BetaCaAr = BetaSr + settings['CaArBias']
+        # The following equations subtract CaAr using the signal on 82, itself corrected for REE2+ using the
+        # Er83_5 signal and canonical Dy/Er (because we don't measure Dy on a half mass).
+        # The default value of Dy_Er is 1.8
+        Er82 = (Er83_5 * 1.601 / 22.869) / np.power((81.96460 / 83.46619), PFract)
+        Dy82 = Er82 / (1.601 / 100.) * Dy_Er * (28.260 / 100.)
+        CaAr82 = CaArErDy82 - Er82 - Dy82
 
-    # Then determine Sr84 by removing CaAr84, Yb84 (168Yb2+) (from Yb86.5), and Er84 (168Er2+) (from Er83.5)
-    Yb84 = Yb86_5 * 0.123 / 16.103 / np.power((83.96694 / 86.46911), BetaSr)
-    Er84 = Er83_5 * 26.978 / 22.869 / np.power((83.96619 / 83.46619), BetaSr)
-    CaAr84 = CaAr82 * 2.086/0.647 / np.power((83.917989 / 81.921122), BetaCaAr)
-    Sr84_c = SrCaArErYb84 - CaAr84 - Er84 - Yb84
+        # Now correct mass 86 for CaAr using CaAr82, and correct for 172Yb2+ using 173Yb2+ (measured on mass 86.5)
+        CaAr86 = (CaAr82 * .004 / .647) / np.power((85.9160721 / 81.9210049), PFract)
+        Yb86 = (Yb86_5 * 21.68 / 16.103) / np.power((85.968195 / 86.46911), PFract)
+        PSr86 = SrCaArYb86 - CaAr86 - Yb86
 
-    # Then determine final Sr88 by removing CaAr88, Yb88 (176Yb2+) (from Yb86.5), and Lu88 (176Lu2+) (from Yb86.5)
-    # and applying the Dy_Er factor * 2.59
-    CaAr88 = CaAr82 * .187 / .647 / np.power((87.9149151 / 81.9210049), BetaSr)
-    Yb88 = Yb86_5 * 12.996 / 16.103 / np.power((87.97129 / 86.46911), BetaSr)
-    Lu88 = Yb88 / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
-    Sr88_c = SrCaArYbLu88 - CaAr88 - Yb88 - Lu88
+        # Now correct mass 88 for CaAr using CaAr82, and correct for 176Yb2+ using 173Yb2+ (measured on mass 86.5)
+        # and 176Lu2+ using 173Yb2+ and applying the same Dy_Er ratio
+        CaAr88 = (CaAr82 * .187 / .647) / np.power((87.9149151 / 81.9210049), PFract)
+        Yb88 = (Yb86_5 * 12.996 / 16.103) / np.power((87.97129 / 86.46911), PFract)
+        Lu88 = Yb88 / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
+        PSr88 = SrCaArYbLu88 - CaAr88 - Yb88 - Lu88
 
-    # Calculate a final CaAr and REE corrected 86 beam
-    CaAr86 = CaAr82 * .004 / .647 / np.power((85.9160721 / 81.9210049), BetaSr)
-    Yb86 = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), BetaSr)
-    Sr86_c = SrCaArYb86 - CaAr86 - Yb86
+        # Use these CaAr and REE stripped Sr 86 and Sr 88 values to calculate a refined fractionation factor
+        BetaSr = (np.log(Sr88_86_reference / (PSr88 / PSr86))) / (np.log(87.9056/85.9093))
+
+        # You might notice that a lot of the following equations look the same as those above,
+        # but just using `BetaSr` fractionation factor instead of `PFract` fractionation factor
+
+        # Calculate Rb fractionation factor, with optional adjustment
+        BetaRb = BetaSr + settings['RbBias']
+
+        # Correct mass 85 for 170Yb2+ using 173Yb2+ (measured on mass 86.5) and 170Er2+ using 167Er2+ (measured on mass 83.5)
+        Yb85 =  Yb86_5 * 2.982 / 16.103 / np.power((84.967385 / 86.46911), BetaSr)
+        Er85 = Er83_5 * 14.910 / 22.869 / np.power((84.96774 / 83.46619), BetaSr)
+        Rb85_c = RbYbEr85 - Yb85 - Er85
+        # Calculate Rb on mass 87
+        Rb87_85_reference = settings['Rb87_85_reference']
+        Rb87 = Rb85_c * Rb87_85_reference / np.power((86.90918 / 84.9118), BetaRb)
+
+        # Subtract this Rb87 amount from the 87 beam, along with 174Yb2+ (calculated from
+        # 173Yb2++, on mass 86.5), to get Sr87
+        Yb87 = Yb86_5 * 32.026 / 16.103 / np.power((86.96943 / 86.46911), BetaSr)
+        Sr87_c = SrRbYb87 - Rb87 - Yb87
+
+        # Calculate unique CaAr fractionation factor relative to Sr fract.
+        BetaCaAr = BetaSr + settings['CaArBias']
+
+        # Then determine Sr84 by removing CaAr84, Yb84 (168Yb2+) (from Yb86.5), and Er84 (168Er2+) (from Er83.5)
+        Yb84 = Yb86_5 * 0.123 / 16.103 / np.power((83.96694 / 86.46911), BetaSr)
+        Er84 = Er83_5 * 26.978 / 22.869 / np.power((83.96619 / 83.46619), BetaSr)
+        CaAr84 = CaAr82 * 2.086/0.647 / np.power((83.917989 / 81.921122), BetaCaAr)
+        Sr84_c = SrCaArErYb84 - CaAr84 - Er84 - Yb84
+
+        # Then determine final Sr88 by removing CaAr88, Yb88 (176Yb2+) (from Yb86.5), and Lu88 (176Lu2+) (from Yb86.5)
+        # and applying the Dy_Er factor * 2.59
+        CaAr88 = CaAr82 * .187 / .647 / np.power((87.9149151 / 81.9210049), BetaSr)
+        Yb88 = Yb86_5 * 12.996 / 16.103 / np.power((87.97129 / 86.46911), BetaSr)
+        Lu88 = Yb88 / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
+        Sr88_c = SrCaArYbLu88 - CaAr88 - Yb88 - Lu88
+
+        # Calculate a final CaAr and REE corrected 86 beam
+        CaAr86 = CaAr82 * .004 / .647 / np.power((85.9160721 / 81.9210049), BetaSr)
+        Yb86 = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), BetaSr)
+        Sr86_c = SrCaArYb86 - CaAr86 - Yb86
 
     # Gather up intermediate channels and add them as time series:
-    # NOTE: adding _c to some channel names to avoid clashes with input channel names
-    int_channel_names = ['PFract', 'CaAr82', 'PSr86', 'PSr88', 'BetaSr', 'BetaRb', 'BetaCaAr',
-                         'Sr84_c', 'Sr86_c', 'Sr87_c', 'Sr88_c', 'Yb84', 'Yb85', 'Yb86', 'Yb87', 'Yb88',
-                         'Er84', 'Er85', 'CaAr84', 'CaAr86', 'CaAr88', 'Lu88', 'Rb85_c', 'Rb87', 'Er82']
+    int_channel_names = ['PFract', 'PSr86', 'PSr88', 'BetaSr', 'BetaRb', 'BetaCaAr',
+                        'Sr84_c', 'Sr86_c', 'Sr87_c', 'Sr88_c', 'CaAr84', 'CaAr86', 'CaAr88', 'Rb87']
 
-    int_channels = [PFract, CaAr82, PSr86, PSr88, BetaSr, BetaRb, BetaCaAr,
-                         Sr84_c, Sr86_c, Sr87_c, Sr88_c, Yb84, Yb85, Yb86, Yb87, Yb88,
-                         Er84, Er85, CaAr84, CaAr86, CaAr88, Lu88, Rb85_c, Rb87, Er82]
+    int_channels = [PFract, PSr86, PSr88, BetaSr, BetaRb, BetaCaAr,
+                        Sr84_c, Sr86_c, Sr87_c, Sr88_c, CaAr84, CaAr86, CaAr88, Rb87]
+
+    if 'REE' in corrections:
+        int_channel_names += ['CaAr82', 'Yb84', 'Yb85', 'Yb86', 'Yb87', 'Yb88', 'Er84', 'Er85', 'Lu88', 'Rb85_c', 'Er82']
+        int_channels += [CaAr82, Yb84, Yb85, Yb86, Yb87, Yb88, Er84, Er85, Lu88, Rb85_c, Er82]
+
 
     for name, channel in zip(int_channel_names, int_channels):
         data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
 
-    drs.message("Calculating further interference corrections...")
+    drs.message("Calculating ratios (first pass)...")
     drs.progress(60)
 
     Sr8786_Uncorr = (SrRbYb87 / SrCaArYb86) * np.power((86.9089 / 85.9093), BetaSr) * mask
@@ -325,8 +361,11 @@ def runDRS():
     Sr8488_Uncorr = (SrCaArErYb84 / SrCaArYbLu88) * np.power((83.9134 / 87.9056), BetaSr)
     Sr8488_Corr = (Sr84_c / Sr88_c) * np.power((83.9134 / 87.9056), BetaSr)
     Rb87asPPM = (Rb87 / SrRbYb87) * 1000000
-    CaArErYb84asPPM = (CaAr84 + Er84 + Yb84) / SrCaArErYb84 * 100000
     TotalSrBeam = Sr88_c + Sr84_c + Sr86_c + Sr87_c
+    if 'REE' in corrections:
+        CaArErYb84asPPM = (CaAr84 + Er84 + Yb84) / SrCaArErYb84 * 100000
+    else:
+        CaArErYb84asPPM = (CaAr84 / SrCaArErYb84) * 100000
 
     # Gather up intermediate channels and add them as time series (again):
     int_channel_names = ['Sr8786_Uncorr', 'Sr8786_Corr', 'Rb87Sr86_Corr', 'Sr8486_Uncorr', 'Sr8486_Corr',
@@ -337,84 +376,87 @@ def runDRS():
     for name, channel in zip(int_channel_names, int_channels):
         data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
 
-    # The following equations subtract CaAr using the signal on 83, itself corrected for REE2+ using the Er83_5 signal.
-    Er83 = Er83_5 * 33.503 / 22.869 / np.power((82.96514975 / 83.46619), PFract)
-    CaAr83 = CaArEr83 - Er83
+    if 'REE' in corrections:
+        drs.message("Calculating further interference corrections...")
 
-    # Use the preliminary fract in stripping CaAr and REE from Sr 86
-    CaAr86_b = CaAr83 * .004 / .135 / np.power((85.9160721 / 82.921150), PFract)
-    Yb86_b = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), PFract)
-    PSrCaArYb86_b = SrCaArYb86 - CaAr86_b - Yb86_b
+        # The following equations subtract CaAr using the signal on 83, itself corrected for REE2+ using the Er83_5 signal.
+        Er83 = Er83_5 * 33.503 / 22.869 / np.power((82.96514975 / 83.46619), PFract)
+        CaAr83 = CaArEr83 - Er83
 
-    # and Sr 88
-    CaAr88_b = CaAr83 * .187 / .135 / np.power((87.9149151 / 82.921150), PFract)
-    Yb88_b = Yb86_5 * 12.996 / 16.103 / np.power((87.97129 / 86.46911), PFract)
-    Lu88_b = Yb88_b / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
-    PSrCaArYbLu88_b = SrCaArYbLu88 - CaAr88_b - Yb88_b - Lu88_b
+        # Use the preliminary fract in stripping CaAr and REE from Sr 86
+        CaAr86_b = CaAr83 * .004 / .135 / np.power((85.9160721 / 82.921150), PFract)
+        Yb86_b = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), PFract)
+        PSrCaArYb86_b = SrCaArYb86 - CaAr86_b - Yb86_b
 
-    # Use these CaAr and REE stripped Sr 86 and Sr 88 values to calculate a refined fractionation factor
-    BetaSr_b = (np.log(Sr88_86_reference/(PSrCaArYbLu88_b / PSrCaArYb86_b))) / (np.log(87.9056/85.9093))
-    BetaRb_b = BetaSr_b + RbBias
+        # and Sr 88
+        CaAr88_b = CaAr83 * .187 / .135 / np.power((87.9149151 / 82.921150), PFract)
+        Yb88_b = Yb86_5 * 12.996 / 16.103 / np.power((87.97129 / 86.46911), PFract)
+        Lu88_b = Yb88_b / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
+        PSrCaArYbLu88_b = SrCaArYbLu88 - CaAr88_b - Yb88_b - Lu88_b
 
-    # Use the Rb fract to calculate the amount of Rb on mass 87
-    # Correct mass 85 for 170Yb2+ using 173Yb2+ (measured on mass 86.5) and 170Er2+ using 167Er2+ (measured on mass 83.5)
-    Yb85_b =  Yb86_5 * 2.982 / 16.103 / np.power((84.967385 / 86.46911), BetaSr_b)
-    Er85_b = Er83_5 * 14.910 / 22.869 / np.power((84.96774 / 83.46619), BetaSr_b)
-    Rb85_b = RbYbEr85 - Yb85_b - Er85_b
-    # Calculate Rb on mass 87
-    Rb87_b = Rb85_b * Rb87_85_reference / np.power((86.90918 / 84.9118), BetaRb_b)
+        # Use these CaAr and REE stripped Sr 86 and Sr 88 values to calculate a refined fractionation factor
+        BetaSr_b = (np.log(Sr88_86_reference/(PSrCaArYbLu88_b / PSrCaArYb86_b))) / (np.log(87.9056/85.9093))
+        BetaRb_b = BetaSr_b + RbBias
 
-    # Subtract this Rb87 amount from the 87 beam, along with 174Yb2+ (calculated from
-    # 173Yb2++, on mass 86.5), to get Sr87
-    Yb87_b = Yb86_5 * 32.026 / 16.103 / np.power((86.96943 / 86.46911), BetaSr_b)
-    Sr87_b = SrRbYb87 - Rb87_b - Yb87_b
+        # Use the Rb fract to calculate the amount of Rb on mass 87
+        # Correct mass 85 for 170Yb2+ using 173Yb2+ (measured on mass 86.5) and 170Er2+ using 167Er2+ (measured on mass 83.5)
+        Yb85_b =  Yb86_5 * 2.982 / 16.103 / np.power((84.967385 / 86.46911), BetaSr_b)
+        Er85_b = Er83_5 * 14.910 / 22.869 / np.power((84.96774 / 83.46619), BetaSr_b)
+        Rb85_b = RbYbEr85 - Yb85_b - Er85_b
+        # Calculate Rb on mass 87
+        Rb87_b = Rb85_b * Rb87_85_reference / np.power((86.90918 / 84.9118), BetaRb_b)
 
-    # Allows for a modification of the CaAr fractionation factor relative to the Sr fract. We have never used anything but 1 (i.e. no modification)
-    BetaCaAr_b = BetaSr_b + CaArBias
+        # Subtract this Rb87 amount from the 87 beam, along with 174Yb2+ (calculated from
+        # 173Yb2++, on mass 86.5), to get Sr87
+        Yb87_b = Yb86_5 * 32.026 / 16.103 / np.power((86.96943 / 86.46911), BetaSr_b)
+        Sr87_b = SrRbYb87 - Rb87_b - Yb87_b
 
-    # Then determine Sr84 by removing CaAr84, Yb84 (168Yb2+) (from Yb86.5), and Er84 (168Er2+) (from Er83.5)
-    Yb84_b = Yb86_5 * 0.123 / 16.103 / np.power((83.96694 / 86.46911), BetaSr_b)
-    Er84_b = Er83_5 * 26.978 / 22.869 / np.power((83.96619 / 83.46619), BetaSr_b)
-    CaAr84_b = CaAr83 * 2.086/0.135 / np.power((83.917989 / 82.921150), BetaCaAr_b)
-    CaArErYb84_b = CaAr84_b + Er84_b + Yb84_b
-    Sr84_b = SrCaArErYb84 - CaAr84_b - Er84_b - Yb84_b
+        # Allows for a modification of the CaAr fractionation factor relative to the Sr fract. We have never used anything but 1 (i.e. no modification)
+        BetaCaAr_b = BetaSr_b + CaArBias
 
-    # Then determine final Sr88 by removing CaAr88, Yb88 (176Yb2+) (from Yb86.5), and Lu88 (176Lu2+) (from Yb86.5)
-    # and applying the Dy_Er factor * 2.59
-    CaAr88_b = CaAr83 * .187 / .135 / np.power((87.9149151 / 82.921150), BetaSr_b)
-    Yb88_b = Yb86_5 * 12.996 / 16.103 / np.power((87.97129 / 86.46911), BetaSr_b)
-    Lu88_b = Yb88_b / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
-    Sr88_b = SrCaArYbLu88 - CaAr88_b - Yb88_b - Lu88_b
+        # Then determine Sr84 by removing CaAr84, Yb84 (168Yb2+) (from Yb86.5), and Er84 (168Er2+) (from Er83.5)
+        Yb84_b = Yb86_5 * 0.123 / 16.103 / np.power((83.96694 / 86.46911), BetaSr_b)
+        Er84_b = Er83_5 * 26.978 / 22.869 / np.power((83.96619 / 83.46619), BetaSr_b)
+        CaAr84_b = CaAr83 * 2.086/0.135 / np.power((83.917989 / 82.921150), BetaCaAr_b)
+        CaArErYb84_b = CaAr84_b + Er84_b + Yb84_b
+        Sr84_b = SrCaArErYb84 - CaAr84_b - Er84_b - Yb84_b
 
-    # Calculate a final CaAr and REE corrected 86 beam
-    CaAr86_b = CaAr83 * .004 / .135 / np.power((85.9160721 / 82.921150), BetaSr_b)
-    Yb86_b = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), BetaSr_b)
-    Sr86_b = SrCaArYb86 - CaAr86_b - Yb86_b
+        # Then determine final Sr88 by removing CaAr88, Yb88 (176Yb2+) (from Yb86.5), and Lu88 (176Lu2+) (from Yb86.5)
+        # and applying the Dy_Er factor * 2.59
+        CaAr88_b = CaAr83 * .187 / .135 / np.power((87.9149151 / 82.921150), BetaSr_b)
+        Yb88_b = Yb86_5 * 12.996 / 16.103 / np.power((87.97129 / 86.46911), BetaSr_b)
+        Lu88_b = Yb88_b / (12.996 / 100.) * Lu_Yb * (2.59 / 100.)
+        Sr88_b = SrCaArYbLu88 - CaAr88_b - Yb88_b - Lu88_b
 
-    Sr8786_Uncorr_b = (SrRbYb87 / SrCaArYb86) * np.power((86.9089 / 85.9093), BetaSr_b)
-    Sr8786_Corr_b = (Sr87_b / Sr86_b) * np.power((86.9089 / 85.9093), BetaSr_b)
-    Rb87Sr86_Corr_b = (Rb87_b / Sr86_b) * np.power((86.9089 / 85.9093), BetaSr_b)
-    Sr8486_Uncorr_b = (SrCaArErYb84 / SrCaArYb86) * np.power((83.9134 / 85.9093), BetaSr_b)
-    Sr8486_Corr_b = (Sr84_b / Sr86_b) * np.power((83.9134 / 85.9093), BetaSr_b)
-    Sr8488_Uncorr_b = (SrCaArErYb84 / SrCaArYbLu88) * np.power((83.9134 / 87.9056), BetaSr_b)
-    Sr8488_Corr_b = (Sr84_b / Sr88_b) * np.power((83.9134 / 87.9056), BetaSr_b)
-    Rb87asPPM_b = (Rb87_b / SrRbYb87) * 1000000
-    CaArErYb84asPPM_b = (CaArErYb84_b / SrCaArErYb84) * 100000
-    TotalSrBeam_b = Sr88_b + Sr84_b + Sr86_b + Sr87_b
+        # Calculate a final CaAr and REE corrected 86 beam
+        CaAr86_b = CaAr83 * .004 / .135 / np.power((85.9160721 / 82.921150), BetaSr_b)
+        Yb86_b = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), BetaSr_b)
+        Sr86_b = SrCaArYb86 - CaAr86_b - Yb86_b
 
-    # Gather up intermediate channels and add them as time series:
-    int_channel_names = ['Er83', 'CaAr83', 'Sr84_b', 'Sr86_b', 'Sr87_b', 'Sr88_b', 'BetaSr_b', 'Rb87_b',
-                        'Sr8786_Uncorr_b', 'Sr8786_Corr_b', 'Rb87Sr86_Corr_b',
-                        'Sr8486_Uncorr_b', 'Sr8486_Corr_b', 'Sr8488_Uncorr_b',
-                        'Sr8488_Corr_b', 'Rb87asPPM_b', 'CaArErYb84asPPM_b', 'TotalSrBeam_b']
+        Sr8786_Uncorr_b = (SrRbYb87 / SrCaArYb86) * np.power((86.9089 / 85.9093), BetaSr_b)
+        Sr8786_Corr_b = (Sr87_b / Sr86_b) * np.power((86.9089 / 85.9093), BetaSr_b)
+        Rb87Sr86_Corr_b = (Rb87_b / Sr86_b) * np.power((86.9089 / 85.9093), BetaSr_b)
+        Sr8486_Uncorr_b = (SrCaArErYb84 / SrCaArYb86) * np.power((83.9134 / 85.9093), BetaSr_b)
+        Sr8486_Corr_b = (Sr84_b / Sr86_b) * np.power((83.9134 / 85.9093), BetaSr_b)
+        Sr8488_Uncorr_b = (SrCaArErYb84 / SrCaArYbLu88) * np.power((83.9134 / 87.9056), BetaSr_b)
+        Sr8488_Corr_b = (Sr84_b / Sr88_b) * np.power((83.9134 / 87.9056), BetaSr_b)
+        Rb87asPPM_b = (Rb87_b / SrRbYb87) * 1000000
+        CaArErYb84asPPM_b = (CaArErYb84_b / SrCaArErYb84) * 100000
+        TotalSrBeam_b = Sr88_b + Sr84_b + Sr86_b + Sr87_b
 
-    int_channels = [Er83, CaAr83, Sr84_b, Sr86_b, Sr87_b, Sr88_b, BetaSr_b, Rb87_b,
-                    Sr8786_Uncorr_b, Sr8786_Corr_b, Rb87Sr86_Corr_b,
-                    Sr8486_Uncorr_b, Sr8486_Corr_b, Sr8488_Uncorr_b,
-                    Sr8488_Corr_b, Rb87asPPM_b, CaArErYb84asPPM_b, TotalSrBeam_b]
+        # Gather up intermediate channels and add them as time series:
+        int_channel_names = ['Er83', 'CaAr83', 'Sr84_b', 'Sr86_b', 'Sr87_b', 'Sr88_b', 'BetaSr_b', 'Rb87_b',
+                            'Sr8786_Uncorr_b', 'Sr8786_Corr_b', 'Rb87Sr86_Corr_b',
+                            'Sr8486_Uncorr_b', 'Sr8486_Corr_b', 'Sr8488_Uncorr_b',
+                            'Sr8488_Corr_b', 'Rb87asPPM_b', 'CaArErYb84asPPM_b', 'TotalSrBeam_b']
 
-    for name, channel in zip(int_channel_names, int_channels):
-        data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
+        int_channels = [Er83, CaAr83, Sr84_b, Sr86_b, Sr87_b, Sr88_b, BetaSr_b, Rb87_b,
+                        Sr8786_Uncorr_b, Sr8786_Corr_b, Rb87Sr86_Corr_b,
+                        Sr8486_Uncorr_b, Sr8486_Corr_b, Sr8488_Uncorr_b,
+                        Sr8488_Corr_b, Rb87asPPM_b, CaArErYb84asPPM_b, TotalSrBeam_b]
+
+        for name, channel in zip(int_channel_names, int_channels):
+            data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
 
     drs.message("Calculating reference material corrected results...")
     drs.progress(70)
@@ -425,7 +467,7 @@ def runDRS():
     try:
         StdSpline_Sr87_86 = data.spline(rmName, "Sr8786_Corr").data()
     except:
-        IoLog.errorWithOrigin("The Combined Sr DRS requires Ref Material selections to proceed.", "BP_Sr_DRS")
+        IoLog.errorWithOrigin("The Combined Sr DRS requires Ref Material selections to proceed.", "Combined Sr Isotope DRS")
         drs.message("DRS did not finish. Please check Messages")
         drs.progress(100)
         drs.finished()
@@ -434,7 +476,7 @@ def runDRS():
     try:
         StdValue_Sr87_86 = data.referenceMaterialData(rmName)["87Sr/86Sr"].value()
     except Exception as e:
-        IoLog.errorWithOrigin(f"Could not get the 87Sr_86Sr value from the RM file: {e}", "BP_DRS")
+        IoLog.errorWithOrigin(f"Could not get the 87Sr_86Sr value from the RM file: {e}", "Combined Sr Isotope DRS")
         drs.message("DRS did not finish. Please check Messages")
         drs.progress(100)
         drs.finished()
@@ -447,21 +489,27 @@ def runDRS():
     # Std Corrected data (BP, 2021-02-01)
     Sr8786_AgeCorr = StdCorr_Sr8786 - (Rb87Sr86_Corr * (0.000013972 ** Age) - 1)
 
-    try:
-        StdSpline_Sr8786_b = data.spline(rmName, "Sr8786_Corr_b").data()
-    except:
-        IoLog.error("The Combined Sr DRS requires Ref Material selections to proceed.")
-        drs.message("DRS did not finish. Please check Messages")
-        drs.progress(100)
-        drs.finished()
-        return
+    if 'REE' in corrections:
+        try:
+            StdSpline_Sr8786_b = data.spline(rmName, "Sr8786_Corr_b").data()
+        except:
+            IoLog.errorWithOrigin("The Combined Sr DRS requires Ref Material selections to proceed.", "Combined Sr Isotope DRS")
+            drs.message("DRS did not finish. Please check Messages")
+            drs.progress(100)
+            drs.finished()
+            return
 
-    StdCorr_Sr8786_b = Sr8786_Corr_b * StdValue_Sr87_86 / StdSpline_Sr8786_b
-    # Now generate age-corrected values (using the observed Rb/Sr ratio)
-    Sr8786_AgeCorr_b = Sr8786_Corr_b - (Rb87Sr86_Corr_b * (0.000013972 ** Age) - 1)
+        StdCorr_Sr8786_b = Sr8786_Corr_b * StdValue_Sr87_86 / StdSpline_Sr8786_b
+        # Now generate age-corrected values (using the observed Rb/Sr ratio)
+        Sr8786_AgeCorr_b = Sr8786_Corr_b - (Rb87Sr86_Corr_b * (0.000013972 ** Age) - 1)
 
-    output_channels_names = ['StdCorr_Sr8786', 'Sr8786_AgeCorr', 'StdCorr_Sr8786_b', 'Sr8786_AgeCorr_b']
-    output_channels = [StdCorr_Sr8786, Sr8786_AgeCorr, StdCorr_Sr8786_b, Sr8786_AgeCorr_b]
+    output_channels_names = ['StdCorr_Sr8786', 'Sr8786_AgeCorr']
+    output_channels = [StdCorr_Sr8786, Sr8786_AgeCorr]
+
+    if 'REE' in corrections:
+        output_channels_names += ['StdCorr_Sr8786_b', 'Sr8786_AgeCorr_b']
+        output_channels += [StdCorr_Sr8786_b, Sr8786_AgeCorr_b]
+
     for name, channel in zip(output_channels_names, output_channels):
         data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
 
@@ -471,7 +519,6 @@ def runDRS():
 
         groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
         data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
-
 
     # CaPO Plot and Correction
     if len(settings['CaPO_RMs']) > 0:
@@ -575,11 +622,11 @@ def settingsWidget():
     drs.setSetting("IndexChannel", defaultChannelName)
     drs.setSetting("ReferenceMaterial", "CO3_shell")
     drs.setSetting("Mask", True)
-    drs.setSetting("MaskMethod", 'Laser Log File')
     drs.setSetting("MaskChannel", defaultChannelName)
     drs.setSetting("MaskCutoff", 0.05)
     drs.setSetting("MaskTrim", 0.0)
     drs.setSetting("Age", 0.)
+    drs.setSetting("Corrections", "CaAr + REE")
     drs.setSetting("Dy_Er", 1.8)
     drs.setSetting("Lu_Yb", 7.0)
     drs.setSetting("RbBias", 0.)
@@ -615,37 +662,21 @@ def settingsWidget():
     maskCheckBox.toggled.connect(lambda t: drs.setSetting("Mask", bool(t)))
     formLayout.addRow("Mask", maskCheckBox)
 
-    maskMethodComboBox = QtGui.QComboBox(widget)
-    maskMethodComboBox.addItems(['Laser Log File', 'Cutoff Threshold'])
-    maskMethodComboBox.setCurrentText(settings["MaskMethod"])
-    maskMethodComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskMethod", t))
-    maskMethodComboBox.currentTextChanged.connect(lambda t: maskFrame.setVisible(not 'Laser' in drs.settings()['MaskMethod']))
-    formLayout.addRow("Method", maskMethodComboBox)
-
-    maskFrame = QtGui.QFrame(widget)
-    maskLayout = QtGui.QFormLayout()
-    maskFrame.setLayout(maskLayout)
-
     maskComboBox = QtGui.QComboBox(widget)
     maskComboBox.addItems(data.timeSeriesNames(data.Input))
     maskComboBox.setCurrentText(settings["MaskChannel"])
     maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
-    maskLayout.addRow("Mask channel", maskComboBox)
+    formLayout.addRow("Mask channel", maskComboBox)
 
     maskLineEdit = QtGui.QLineEdit(widget)
     maskLineEdit.setText(settings["MaskCutoff"])
     maskLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskCutoff", float(t)))
-    maskLayout.addRow("Mask cutoff", maskLineEdit)
+    formLayout.addRow("Mask cutoff", maskLineEdit)
 
     maskTrimLineEdit = QtGui.QLineEdit(widget)
     maskTrimLineEdit.setText(settings["MaskTrim"])
     maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
-    maskLayout.addRow("Mask trim", maskTrimLineEdit)
-
-    # By default, don't show options for setting mask threshold etc
-    maskFrame.setVisible(False)
-
-    formLayout.addWidget(maskFrame)
+    formLayout.addRow("Mask trim", maskTrimLineEdit)
 
     verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer2)
@@ -665,6 +696,18 @@ def settingsWidget():
     caArBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("CaArBias", float(t)))
     formLayout.addRow("CaAr Bias Adjustment", caArBiasLineEdit)
 
+    verticalSpacer3 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer3)
+
+    corrComboBox = QtGui.QComboBox(widget)
+    corrComboBox.addItems(['CaAr + REE', 'CaAr only'])
+    corrComboBox.setCurrentText(settings['Corrections'])
+    corrComboBox.currentTextChanged.connect(lambda t: drs.setSetting('Corrections', t))
+    formLayout.addRow("Corrections", corrComboBox)
+
+    verticalSpacer4 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer4)
+
     luYbLineEdit = QtGui.QLineEdit(widget)
     luYbLineEdit.setText(settings["Lu_Yb"])
     luYbLineEdit.textChanged.connect(lambda t: drs.setSetting("Lu_Yb", float(t)))
@@ -674,6 +717,9 @@ def settingsWidget():
     dyErLineEdit.setText(settings["Dy_Er"])
     dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
     formLayout.addRow("Dy/Er ratio", dyErLineEdit)
+
+    verticalSpacer5 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer5)
 
     sr88_86_refLineEdit = QtGui.QLineEdit(widget)
     sr88_86_refLineEdit.setText(settings["Sr88_86_reference"])
@@ -685,6 +731,9 @@ def settingsWidget():
     rb87_85_refLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb87_85_reference", float(t)))
     formLayout.addRow("Reference Rb87/Rb85 value", rb87_85_refLineEdit)
 
+    verticalSpacer6 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer6)
+
     setExtButton = QtGui.QToolButton(widget)
     rmMenu = ReferenceMaterialsMenu(setExtButton)
     rmMenu.rmsChanged.connect(lambda l: drs.setSetting("CaPO_RMs", l))
@@ -694,13 +743,14 @@ def settingsWidget():
     setExtButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
     formLayout.addRow("RMs for CaPO correction:", setExtButton)
 
+    # Plot for CaPO correction
+    formLayout.addRow('CaPO Correction fit', PLOT)
+
     propCheckBox = QtGui.QCheckBox(widget)
     propCheckBox.setChecked(settings["PropagateError"])
     propCheckBox.toggled.connect(lambda t: drs.setSetting("PropagateError", bool(t)))
     formLayout.addRow("Propagate Errors?", propCheckBox)
 
-    # Plot for CaPO correction
-    formLayout.addRow('CaPO Correction fit', PLOT)
 
     # Restore settings
     try:
