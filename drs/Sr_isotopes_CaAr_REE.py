@@ -467,7 +467,7 @@ def runDRS():
     try:
         StdSpline_Sr87_86 = data.spline(rmName, "Sr8786_Corr").data()
     except:
-        IoLog.errorWithOrigin("The Combined Sr DRS requires Ref Material selections to proceed.", "Combined Sr Isotope DRS")
+        IoLog.errorWithOrigin("The Combined Sr DRS requires Ref Material selections to proceed_.", "Combined Sr Isotope DRS")
         drs.message("DRS did not finish. Please check Messages")
         drs.progress(100)
         drs.finished()
