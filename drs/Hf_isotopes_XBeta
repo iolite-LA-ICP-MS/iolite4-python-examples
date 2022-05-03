@@ -1,0 +1,385 @@
+#/ Type: DRS
+#/ Name: Hf Isotopes XBeta
+#/ Authors: Graham Hagen-Peter
+#/ Description: A Hf isotopes with calibration of BetaYb/BetaHf (XBeta)
+#/ References: See Iolite forum for description of DRS. Approach outlined in Granseth et al. (2021; Gond. Res.); modified from Woodhead et al. (2004; Chem. Geol.) and variations in Iolite DRS versions since then
+#/ Version: 1.0
+#/ Contact: ghagenpe@gmail.com
+
+from iolite import QtGui
+import numpy as np
+import math
+
+def runDRS():
+
+	drs.message("Starting Hf isotopes XBeta DRS...")
+	drs.progress(0)
+
+	# Get settings
+	settings = drs.settings()
+	print(settings)   
+
+	indexChannel = data.timeSeries(settings["IndexChannel"])
+	maskOption = settings["Mask"]
+	maskChannel = data.timeSeries(settings["MaskChannel"])
+	rmName = settings["ReferenceMaterial"]
+	YbBeta_adjust = settings["YbBeta_adjust"]
+	YbrmName = settings["YbReferenceMaterial"]
+	YbBeta_scale = settings["YbBeta_scale"]
+	cutoff = settings["MaskCutoff"]
+	trim = settings["MaskTrim"]
+	HfTrue = settings["HfTrue"]
+	Yb31 = settings["Yb31"]
+	Yb63 = settings["Yb63"]
+	age = settings["Age"]
+	propErrors = settings["PropagateError"]
+
+	# Create debug messages for the settings being used
+	IoLog.debug("indexChannelName = %s" % indexChannel.name)
+	IoLog.debug("maskChannelName = %s" % maskChannel.name)
+	IoLog.debug("maskCutoff = %f" % cutoff)
+	IoLog.debug("maskTrim = %f" % trim)	
+
+	# Setup index time
+	drs.message("Setting up index time...")
+	drs.progress(5)
+	drs.setIndexChannel(indexChannel)
+
+
+	# Setup the mask
+	if maskOption:
+		drs.message("Making mask...")
+		drs.progress(10)
+		mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
+		data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
+	else:
+		mask = np.ones_like(indexChannel.data())
+		data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
+
+	# Interp onto index time and baseline subtract
+	drs.message("Interpolating onto index time and baseline subtracting...")
+	drs.progress(25)
+
+	allInputChannels = data.timeSeriesList(data.Input)
+	
+	blGrp = None
+
+	if len(data.selectionGroupList(data.Baseline)) > 1:
+		IoLog.error("There are more than one baseline groups. Combined Sr DRS cannot proceed...")
+		drs.message("DRS did not finish. Please check Messages")
+		drs.progress(100)
+		drs.finished()
+		return
+	else:
+		blGrp = data.selectionGroupList(data.Baseline)[0]
+
+	for counter, channel in enumerate(allInputChannels):
+		drs.message("Baseline subtracting %s" % channel.name)
+		drs.progress(25 + 50*counter/len(allInputChannels))
+		drs.baselineSubtract(blGrp, [allInputChannels[counter]], mask, 25, 75)
+
+
+
+	#Hf180 = data.timeSeries("m180_CPS").data()
+	#Hf179 = data.timeSeries("m179_CPS").data()
+	#Hf178 = data.timeSeries("m178_CPS").data()
+	#Hf177 = data.timeSeries("m177_CPS").data()
+	#HfLuYb176 = data.timeSeries("m176_CPS").data()
+	#Lu175 = data.timeSeries("m175_CPS").data()
+	#HfYb174 = data.timeSeries("m174_CPS").data()
+	#Yb173 = data.timeSeries("m173_CPS").data()
+	#Yb171 = data.timeSeries("m171_CPS").data()
+
+	try:
+		Hf179 = data.timeSeries("m179_CPS").data()
+		Hf177 = data.timeSeries("m177_CPS").data()
+		HfLuYb176 = data.timeSeries("m176_CPS").data()
+		Lu175 = data.timeSeries("m175_CPS").data()
+		Yb173 = data.timeSeries("m173_CPS").data()
+		Yb171 = data.timeSeries("m171_CPS").data()
+
+	except:
+		IoLog.error("This DRS requires data for mass 179, 177, 176, 175, 173, and 174 for the basic calculations.")
+		drs.message("DRS did not finish. Please check Messages")
+		drs.progress(100)
+		drs.finished()
+		return
+
+	try:
+		Hf180 = data.timeSeries("m180_CPS").data()
+	except:
+		pass
+
+	try:
+		Hf178 = data.timeSeries("m178_CPS").data()
+	except:
+		pass
+
+	try:
+		HfYb174 = data.timeSeries("m174_CPS").data()
+	except:
+		pass
+
+	try:
+		Yb172 = data.timeSeries("m172_CPS").data()
+	except:
+		pass
+		
+
+
+	HfFract = (np.log(HfTrue / (Hf179/Hf177))) / (np.log(178.946 / 176.943))*mask
+	YbFract = (np.log(Yb31 /(Yb173/Yb171))) / (np.log(172.938222 / 170.936338))*mask
+	Yb176 = Yb173 * (Yb63 / (np.power((175.942576 / 172.938222) , YbFract)))
+	Lu176 = Lu175 * (0.02656 / (np.power((175.942694 / 174.9408) , YbFract)))
+	Hf176c = HfLuYb176 - Yb176 - Lu176
+	LuHf176 = HfLuYb176 - Yb176
+	YbHf176 = HfLuYb176 - Lu176
+	Yb_PPM_on_176 = (Yb176 / HfLuYb176) * 1000000*mask
+	Lu_PPM_on_176 = (Lu176 / HfLuYb176) * 1000000*mask
+	Hf176_177_Raw = (HfLuYb176 / Hf177) * np.power((175.941 / 176.943) , HfFract)*mask
+	Hf176_177_Corr = (Hf176c/ Hf177) * np.power((175.941 / 176.943) , HfFract)*mask
+	Hf176_177_LuCorr = (YbHf176 / Hf177) * np.power((175.941 / 176.943) , HfFract)*mask
+	Hf176_177_YbCorr = (LuHf176 / Hf177) * np.power((175.941 / 176.943) , HfFract)*mask
+	Lu176_Hf177_Raw = (Lu176 / Hf177)*mask
+	Lu176_Hf177_Corr = (Lu176 / Hf177) * np.power((175.942694 / 176.943), (0.5*(HfFract + YbFract)))*mask
+	Yb176_Hf177_Raw = (Yb176 / Hf177)*mask
+	Yb176_Hf177_Corr = (Yb176 / Hf177) * np.power((175.942576 / 176.943), (0.5*(HfFract + YbFract)))*mask
+	TotalHfBeam =  Hf177 / 0.186
+
+	try:
+		Hf178_177 = (Hf178 / Hf177) * np.power((177.944 / 176.943) , HfFract)*mask
+		data.createTimeSeries("Hf178_177", data.Output, indexChannel.time(), Hf178_177)
+	except:
+		pass
+
+	data.createTimeSeries("Hf176_177_Corr", data.Intermediate, indexChannel.time(), Hf176_177_Corr)
+	data.createTimeSeries("HfFract", data.Intermediate, indexChannel.time(), HfFract)
+	data.createTimeSeries("YbFract", data.Intermediate, indexChannel.time(), YbFract)
+	
+	StdSpline_Hf176_177 = data.spline(rmName, "Hf176_177_Corr").data()
+	StdValue_Hf176_177 = data.referenceMaterialData(rmName)["176Hf/177Hf"].value()
+
+
+	StdCorr_Hf176_177 = (Hf176_177_Corr)* StdValue_Hf176_177 / StdSpline_Hf176_177
+
+	data.createTimeSeries("StdCorr_Hf176_177", data.Output, indexChannel.time(), StdCorr_Hf176_177)
+
+	data.createTimeSeries("TotalHfBeam", data.Output, indexChannel.time(), TotalHfBeam)
+
+# Start the "Xbeta" calculations here
+
+	if YbBeta_adjust:
+
+		XBeta = YbFract/HfFract	
+
+		data.createTimeSeries("XBeta", data.Intermediate, indexChannel.time(), XBeta)
+
+		StdSpline_XBeta = data.spline(YbrmName, "XBeta").data()
+
+		Yb176x = Yb173 * (Yb63 / (np.power((175.942576 / 172.938222) , HfFract*StdSpline_XBeta)))
+
+		Lu176x = Lu175 * (0.02656 / (np.power((175.942694 / 174.9408) , HfFract*StdSpline_XBeta)))
+	
+		Hf176x = HfLuYb176 - Yb176x - Lu176x	
+
+		Hf176_177_Corrx = (Hf176x/ Hf177) * np.power((175.941 / 176.943) , HfFract)*mask
+
+		data.createTimeSeries("Hf176_177_Corrx", data.Intermediate, indexChannel.time(), Hf176_177_Corrx)	
+
+		StdSpline_Hf176_177x = data.spline(rmName, "Hf176_177_Corrx").data()
+
+		StdCorr_Hf176_177x = (Hf176_177_Corrx)* StdValue_Hf176_177 / StdSpline_Hf176_177x * mask	
+
+		data.createTimeSeries("StdCorr_Hf176_177x", data.Output, indexChannel.time(), StdCorr_Hf176_177x)
+
+		Lu176_Hf177_Corrx = (Lu176x / Hf177) * np.power((175.942694 / 176.943), HfFract*StdSpline_XBeta)
+
+		data.createTimeSeries("Lu176_Hf177_Corrx", data.Output, indexChannel.time(), Lu176_Hf177_Corrx)
+
+		Yb176_Hf177_Corrx = (Yb176x / Hf177) * np.power((175.942576 / 176.943), HfFract*StdSpline_XBeta)
+
+		data.createTimeSeries("Yb176_Hf177_Corrx", data.Output, indexChannel.time(), Yb176_Hf177_Corrx)
+			
+
+	else:
+
+		XBeta = HfFract * YbBeta_scale
+
+		Yb176x = Yb173 * (Yb63 / (np.power((175.942576 / 172.938222) , XBeta)))
+
+		Lu176x = Lu175 * (0.02656 / (np.power((175.942694 / 174.9408) , XBeta)))
+
+		Hf176x = HfLuYb176 - Yb176x - Lu176x	
+
+		Hf176_177_Corrx = (Hf176x/ Hf177) * np.power((175.941 / 176.943) , HfFract)*mask
+
+		data.createTimeSeries("Hf176_177_Corrx", data.Intermediate, indexChannel.time(), Hf176_177_Corrx)	
+
+		StdSpline_Hf176_177x = data.spline(rmName, "Hf176_177_Corrx").data()
+
+		StdCorr_Hf176_177x = (Hf176_177_Corrx)* StdValue_Hf176_177 / StdSpline_Hf176_177x
+
+		data.createTimeSeries("StdCorr_Hf176_177x", data.Output, indexChannel.time(), StdCorr_Hf176_177x)
+
+		Lu176_Hf177_Corrx = (Lu176x / Hf177) * np.power((175.942694 / 176.943), XBeta)
+
+		data.createTimeSeries("Lu176_Hf177_Corrx", data.Output, indexChannel.time(), Lu176_Hf177_Corrx)
+
+		Yb176_Hf177_Corrx = (Yb176x / Hf177) * np.power((175.942576 / 176.943), XBeta)
+
+		data.createTimeSeries("Yb176_Hf177_Corrx", data.Output, indexChannel.time(), Yb176_Hf177_Corrx)
+	
+	#EndIf
+
+# End the "Xbeta" calculations here
+
+
+	if propErrors:
+		groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
+		data.propagateErrors(groups, [data.timeSeries("StdCorr_Hf176_177x")], data.timeSeries("Hf176_177_Corrx"), rmName)
+
+
+	EpsHfi = ((StdCorr_Hf176_177x - Lu176_Hf177_Corrx * (math.exp(0.00001867 * age)-1))/(0.282785 - 0.0336 * (math.exp(0.00001867 * age)-1))-1)*10000
+	data.createTimeSeries("EpsHfi", data.Output, indexChannel.time(), EpsHfi)
+
+
+	drs.message("Finished!")
+	drs.progress(100)
+	drs.finished()
+	
+
+def settingsWidget():
+	"""
+	This function puts together a user interface to configure the DRS.
+	
+	It is important to have the last line of this function call:
+	drs.setSettingsWidget(widget)
+	"""
+
+	widget = QtGui.QWidget()
+	formLayout = QtGui.QFormLayout()
+	widget.setLayout(formLayout)
+
+	timeSeriesNames = data.timeSeriesNames(data.Input)
+	defaultChannelName = ""
+	if timeSeriesNames:
+		defaultChannelName = timeSeriesNames[0]
+
+	rmNames = data.selectionGroupNames(data.ReferenceMaterial)
+
+	drs.setSetting("IndexChannel", defaultChannelName)
+	drs.setSetting("ReferenceMaterial", "Z_Plesovice")
+	drs.setSetting("YbBeta_adjust", True)
+	drs.setSetting("YbReferenceMaterial", "Z_MunZirc4")
+	drs.setSetting("YbBeta_scale", 1.)
+	drs.setSetting("Mask", True)
+	drs.setSetting("MaskChannel", defaultChannelName)
+	drs.setSetting("MaskCutoff", 0.1)
+	drs.setSetting("MaskTrim", 0.0)
+	drs.setSetting("HfTrue", 0.7325)
+	drs.setSetting("Yb31", 1.130172) # reference Yb isotope ratios from Segal et al. 2003
+	drs.setSetting("Yb63", 0.793813)
+	drs.setSetting("Age", 0)
+	drs.setSetting("PropagateError", False)
+
+	settings = drs.settings()
+
+	indexComboBox = QtGui.QComboBox(widget)
+	indexComboBox.addItems(timeSeriesNames)
+	indexComboBox.setCurrentText(settings["IndexChannel"])
+	indexComboBox.currentTextChanged.connect(lambda t: drs.setSetting("IndexChannel", t))
+	formLayout.addRow("Index channel", indexComboBox)
+
+	rmComboBox = QtGui.QComboBox(widget)
+	rmComboBox.addItems(rmNames)
+	rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+	rmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
+	formLayout.addRow("176Hf/177Hf Reference material", rmComboBox)
+
+
+	verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum)
+	formLayout.addItem(verticalSpacer)
+
+
+	YbCheckBox = QtGui.QCheckBox(widget)
+	YbCheckBox.setChecked(settings["YbBeta_adjust"])
+	YbCheckBox.toggled.connect(lambda t: drs.setSetting("YbBeta_adjust", bool(t)))
+	formLayout.addRow("Use reference material for XBeta (BetaYb/BetaHf)?", YbCheckBox)	    
+
+
+	rmComboBox = QtGui.QComboBox(widget)
+	rmComboBox.addItems(rmNames)
+	rmComboBox.setCurrentText(settings["YbReferenceMaterial"])
+	rmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("YbReferenceMaterial", t))
+	formLayout.addRow("Reference material for XBeta", rmComboBox)  
+
+
+	DRS_message = QtGui.QLabel("Good idea to check the 'XBeta' spline for the XBeta reference material!")
+	#DRS_message.setStyleSheet('color:yellow')
+	formLayout.addRow(DRS_message)
+
+	YbBiasLineEdit = QtGui.QLineEdit(widget)
+	YbBiasLineEdit.setText(settings["YbBeta_scale"])
+	YbBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("YbBeta_scale", float(t)))
+	formLayout.addRow("Scale Hf Beta for BetaYb (if no Yb Beta adjust)", YbBiasLineEdit)
+
+
+	verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum)
+	formLayout.addItem(verticalSpacer2) 
+
+	MaskCheckBox = QtGui.QCheckBox(widget)
+	MaskCheckBox.setChecked(settings["Mask"])
+	MaskCheckBox.toggled.connect(lambda t: drs.setSetting("Mask", bool(t)))
+	formLayout.addRow("Mask", MaskCheckBox)	
+
+
+	maskComboBox = QtGui.QComboBox(widget)
+	maskComboBox.addItems(data.timeSeriesNames(data.Input))
+	maskComboBox.setCurrentText(settings["MaskChannel"])
+	maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
+	formLayout.addRow("Mask channel", maskComboBox)
+
+	maskLineEdit = QtGui.QLineEdit(widget)
+	maskLineEdit.setText(settings["MaskCutoff"])
+	maskLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskCutoff", float(t)))
+	formLayout.addRow("Mask cutoff", maskLineEdit)
+
+	maskTrimLineEdit = QtGui.QLineEdit(widget)
+	maskTrimLineEdit.setText(settings["MaskTrim"])
+	maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
+	formLayout.addRow("Mask trim", maskTrimLineEdit)
+
+	hfTrueLineEdit = QtGui.QLineEdit(widget)
+	hfTrueLineEdit.setText(settings["HfTrue"])
+	hfTrueLineEdit.textChanged.connect(lambda t: drs.setSetting("HfTrue", float(t)))
+	formLayout.addRow("179Hf/177Hf", hfTrueLineEdit)
+
+	Yb31LineEdit = QtGui.QLineEdit(widget)
+	Yb31LineEdit.setText(settings["Yb31"])
+	Yb31LineEdit.textChanged.connect(lambda t: drs.setSetting("Yb31", float(t)))
+	formLayout.addRow("173Yb/171Yb", Yb31LineEdit)
+
+	Yb63LineEdit = QtGui.QLineEdit(widget)
+	Yb63LineEdit.setText(settings["Yb63"])
+	Yb63LineEdit.textChanged.connect(lambda t: drs.setSetting("Yb63", float(t)))
+	formLayout.addRow("176Yb/173Yb", Yb63LineEdit)
+
+	ageLineEdit = QtGui.QLineEdit(widget)
+	ageLineEdit.setText(settings["Age"])
+	ageLineEdit.textChanged.connect(lambda t: drs.setSetting("Age", float(t)))
+	formLayout.addRow("Age (Ma)", ageLineEdit)
+
+	propCheckBox = QtGui.QCheckBox(widget)
+	propCheckBox.setChecked(settings["PropagateError"])
+	propCheckBox.toggled.connect(lambda t: drs.setSetting("PropagateError", bool(t)))
+	formLayout.addRow("PropagateError", propCheckBox)	
+
+	verticalSpacer3 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum)
+	formLayout.addItem(verticalSpacer3)
+
+	DRS_message = QtGui.QLabel("Notes:\n179Hf/177Hf from Patchett and Tatsumoto (1981)\nDefault Yb ratios from Segal et al. (2003)\nCHUR parameters for EpsHfi from Bouvier et al. (2008)\n176Lu decay constant for EHfi from Soderlund et al. (2004)")
+	#DRS_message.setStyleSheet('color:yellow')
+	formLayout.addRow(DRS_message)
+
+
+	drs.setSettingsWidget(widget)
