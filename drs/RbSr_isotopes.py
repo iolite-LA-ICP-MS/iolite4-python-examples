@@ -7,6 +7,7 @@
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
+from iolite.types import Result
 import numpy as np
 
 
@@ -19,7 +20,8 @@ def Rb87_Sr87_Sr86_error_corr(sel):
     try:
         StdCorr_Sr87s_Sr86s = data.timeSeries("StdCorr_Sr87s_Sr86s")
         StdCorr_Rb87_Sr86s = data.timeSeries("StdCorr_Rb87_Sr86s")
-    except RuntimeError:
+    except RuntimeError as e:
+        print(e)
         return result
 
     array_1 = StdCorr_Sr87s_Sr86s.dataForSelection(sel)
@@ -34,7 +36,8 @@ def Rb87_Sr87_error_corr(sel):
     try:
         Sr87s_Rb87_Raw = data.timeSeries("Sr87s_Rb87_Raw")
         StdCorr_Rb87_Sr86s = data.timeSeries("StdCorr_Rb87_Sr86s")
-    except RuntimeError:
+    except RuntimeError as e:
+        print(e)
         return result
 
     array_1 = Sr87s_Rb87_Raw.dataForSelection(sel)
@@ -160,6 +163,8 @@ def runDRS():
 
     drs.message("Correcting ratios...")
     drs.progress(80)
+
+    print("Correcting ratios here...")
 
     StdSpline_Rb87_Sr86s = data.spline(rmName, "Rb87_Sr86s_Raw").data()
     try:
