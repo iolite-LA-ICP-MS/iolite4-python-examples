@@ -204,7 +204,7 @@ def runDRS():
 
     # Register error correlations:
     data.registerAssociatedResult("87Rb/86Sr - 87Rb/86Sr Rho", Rb87_Sr87_Sr86_error_corr)
-    data.registerAssociatedResult("87Rb/86Sr - 87Rb/87Sr Rho", Rb87_Sr87_error_corr)
+    data.registerAssociatedResult("87Sr/87Rb - 87Rb/86Sr Rho", Rb87_Sr87_error_corr)
 
     drs.message("Finished!")
     drs.progress(100)
