@@ -3,11 +3,11 @@
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: Trace elements with multiple reference materials
 #/ References: None
-#/ Version: 1.1
+#/ Version: 1.0
 #/ Contact: support@iolite-software.com
 
 """
-Copyright (c) 2021 iolite software
+Copyright (c) 2022 iolite software
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -33,7 +33,7 @@ from iolite.QtGui import QToolButton, QMenu, QWidgetAction, QCheckBox,QAbstractI
 from iolite.QtGui import QWidget, QVBoxLayout, QSizePolicy, QDialog, QHBoxLayout, QShortcut, QKeySequence, QGroupBox, QPen
 from iolite.QtGui import QHeaderView, QSplitter, QPlainTextEdit, QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem
 from iolite.QtGui import QInputDialog, QFileDialog, QFont, QBrush, QAction, QStyledItemDelegate, QFrame, QFormLayout, QSpinBox, QListWidget
-from iolite.QtGui import QItemSelectionModel, QPushButton, QApplication, QMargins
+from iolite.QtGui import QItemSelectionModel, QPushButton, QApplication, QMargins, QCompleter
 from iolite.QtCore import Signal, QAbstractListModel, QModelIndex, QPoint, QFile, QIODevice, QTimer, QEvent, QSettings, QDir, QRegularExpression
 from iolite.Qt import Qt
 from iolite.QtUiTools import QUiLoader
@@ -113,7 +113,7 @@ def makeBeamSeconds():
         pass
 
     if 'log' in method.lower():
-        drs.createBeamSecondsFromLaserLog()        
+        drs.createBeamSecondsFromLaserLog()
     elif 'gap' in method.lower():
         drs.createBeamSecondsFromSamples()
     elif 'cutoff' in method.lower():
@@ -190,7 +190,11 @@ class Block(object):
             #smy = abdf[sel.group().name]
             #res = sm.RLM(smy, smx).fit()
 
-            self.df.loc[uuid, 'sel_mid_time'] = float(sel.midTimeInSec)
+            if sel.isLinked():
+                self.df.loc[uuid, 'sel_mid_time'] = float(sel.linkedMidTimeInSec())
+            else:
+                self.df.loc[uuid, 'sel_mid_time'] = float(sel.midTimeInSec)
+
             self.df.loc[uuid, 'sel_duration'] = float(sel.duration)
             self.df.loc[uuid, 'group'] = sel.group().name
 
@@ -464,8 +468,22 @@ def findBlocks(method=None):
         raise MissingRMGroupError
 
     selections = list(itertools.chain(*[sg.selections() for sg in groups]))
+
+    # Need to kick out component selections
+    component_sels = []
+    for sel in selections:
+        if sel.isLinked():
+            l_sels = sel.linkedSelections()
+            for l_sel in l_sels:
+                component_sels.append(l_sel)
+    # Now kick them out
+    for sel in selections:
+        if sel.property("UUID") in component_sels:
+            selections.remove(sel)
+
     selections.sort(key=lambda s: s.midTimeInSec)
-    selMidTimes = [s.midTimeInSec for s in selections]
+    selMidTimes = [s.midTimeInSec if not s.isLinked() else s.linkedMidTimeInSec() for s in selections]
+    selMidTimes.sort()
 
     def assignedBlock(s):
         if s.property('Block') is not None:
@@ -520,7 +538,7 @@ def findBlocks(method=None):
     print(f'Used method = {method}, got labels = {labels}')
     specified = [si for si, s in enumerate(selections) if s.property('Block') is not None]
     for k in np.unique(labels):
-        matches = np.where(np.array(labels).astype(int) == k)[0]        
+        matches = np.where(np.array(labels).astype(int) == k)[0]
         ind = [i for i in matches if i not in specified]
         block_selections[k] = list(np.array(selections)[ind])
 
@@ -702,7 +720,7 @@ class Calibration(object):
         ft = data.timeSeries(name).property('FractionationFitType')
         fc = data.timeSeries(name).property('FractionationCorrection')
 
-        if not k:            
+        if not k:
             k = 1 if not ft or ft == 'Linear' else 3
 
         if not isElements:
@@ -822,6 +840,52 @@ def runDRS():
     settings = drs.settings()
 
     print(settings)
+
+    # If running as a processing template, need to copy over defaults and
+    # other custom externals/internals to the actual channels available
+    if drs.isPTAction():
+        print('Applying PT options...')
+        if 'IndexChannel' not in settings or settings['IndexChannel'] == '':
+            settings['IndexChannel'] = data.timeSeriesNames(data.Input)[0]
+
+        pt_exts = settings['PTExternal']
+        for ext in pt_exts:
+            channels = [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]
+            if ext['name'] != 'Default':
+                channels = [c for c in channels if len(re.findall(ext['name'], c.name)) > 0]
+
+            for channel in channels:
+                channel.setProperty('External standard', ext['standards'])
+                channel.setProperty('FitThroughZero', ext['zero'])
+                channel.setProperty('Model', ext['model'])
+                if ext['frac'] == 'None':
+                    channel.setProperty('FractionationCorrection', False)
+                else:
+                    channel.setProperty('FractionationCorrection', True)
+                    channel.setProperty('FractionationFitType', ext['frac'])
+
+        pt_is = settings['PTInternal']
+        requiredProperties = ['Internal element', 'Internal value', 'Internal units']
+
+        if pt_is is None:
+            pt_is = []
+        for intstd in pt_is:
+            sels = list(itertools.chain(*[sg.selections() for sg in data.selectionGroupList(data.ReferenceMaterial | data.Sample)]))
+            if intstd['group'] != 'Default':
+                sels = [s for s in sels if len(re.findall(intstd['group'], s.group().name)) > 0]
+
+            if intstd['selection'] != 'Default':
+                sels = [s for s in sels if len(re.findall(intstd['selection'], s.name)) > 0]
+
+            for sel in sels:
+                if 'PreserveISProperties' in settings and settings['PreserveISProperties'] and set(requiredProperties) <= set(sel.properties().keys()):
+                    continue
+                sel.setProperty('Internal element', intstd['elements'])
+                sel.setProperty('Internal value', intstd['value'])
+                sel.setProperty('Internal units', intstd['units'])
+                sel.setProperty('External affinity', intstd['affinity'])
+
+
     drs.clearSelectionProperties(QRegularExpression("Sensitivity.+"))
 
     indexChannel = data.timeSeries(settings["IndexChannel"])
@@ -850,17 +914,18 @@ def runDRS():
 
     # Setup the mask
     maskOption = settings["Mask"]
-    maskChannel = data.timeSeries(settings["MaskChannel"])
-    maskMethod = settings['MaskMethod']
-    cutoff = settings["MaskCutoff"]
-    trim = settings["MaskTrim"]
 
     if maskOption:
         drs.message("Making mask...")
         drs.progress(10)
+        maskMethod = settings['MaskMethod']
+
         if 'Laser' in maskMethod:
             mask = drs.createMaskFromLaserLog(trim)
         else:
+            maskChannel = data.timeSeries(settings["MaskChannel"])
+            cutoff = settings["MaskCutoff"]
+            trim = settings["MaskTrim"]
             mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
     else:
@@ -1239,7 +1304,7 @@ class ExternalsModel(QAbstractTableModel):
 
         if index.column() == 0:
             return self.channels[index.row()].name
-        elif index.column() == 1:        
+        elif index.column() == 1:
             return self.channels[index.row()].property('External standard')
         elif index.column() == 2:
             return self.channels[index.row()].property('Model')
@@ -1465,9 +1530,9 @@ class InternalsModel(QAbstractTableModel):
 
             try:
                 if s.group().type == data.Sample:
-                    sum = np.sum([Result(s.property(e), 0, 'wtpc', e).valueInUnits(units) for e in elements])
+                    sum = np.sum([Result(float(s.property(e)), 0, 'wtpc', e).valueInUnits(units) for e in elements])
                 elif s.group().type == data.ReferenceMaterial:
-                    sum = np.sum([data.referenceMaterialData(s.group().name)[e].valueInUnits(units) for e in elements])
+                    sum = np.sum([data.referenceMaterialData(s.group().name)[e].valueInUnits(units) for e in elements if e in data.referenceMaterialData(s.group().name)])
             except:
                 sum = 0
 
@@ -1974,7 +2039,10 @@ class BlockAssignmentsModel(QAbstractTableModel):
         elif index.column() == 1:
             return s.name
         elif index.column() == 2:
-            return s.startTime.toString('yyyy-MM-dd hh:mm:ss.zzz')
+            if s.isLinked():
+                return s.linkedStartTime().toString('yyyy-MM-dd hh:mm:ss.zzz')
+            else:
+                return s.startTime.toString('yyyy-MM-dd hh:mm:ss.zzz')
         elif index.column() == 3:
             return blockIndex
 
@@ -2018,7 +2086,7 @@ class BlockPlot(QWidget):
         self.plot.left().label = 'Intensity'
         self.plot.bottom().label = 'Concentration'
         self.layout().addWidget(self.plot)
-        
+
         self.logButton = OverlayButton(self.plot, 'BottomLeft', 0, 0)
         self.logButton.setCheckable(True)
         self.logButton.setText('10ⁿ')
@@ -2113,8 +2181,20 @@ class BlockPlot(QWidget):
 
         groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
         selections = list(itertools.chain(*[sg.selections() for sg in groups]))
-        selections.sort(key=lambda s: s.midTimeInSec)
-        selMidTimes = [s.midTimeInSec for s in selections]
+        # Need to kick out component selections
+        component_sels = []
+        for sel in selections:
+            if sel.isLinked():
+                l_sels = sel.linkedSelections()
+                for l_sel in l_sels:
+                    component_sels.append(l_sel)
+        # Now kick them out
+        for sel in selections:
+            if sel.property("UUID") in component_sels:
+                selections.remove(sel)
+
+        selMidTimes = [s.midTimeInSec if not s.isLinked() else s.linkedMidTimeInSec() for s in selections]
+        selMidTimes.sort()
 
         blockModel = BlockAssignmentsModel(selections, d)
         table.setModel(blockModel)
@@ -2192,7 +2272,7 @@ class BlockPlot(QWidget):
         self.bn = bn
         self.updatePlot()
 
-    def toggleLog(self, b):        
+    def toggleLog(self, b):
         self.plot.left().setLogarithmic(b)
         self.plot.bottom().setLogarithmic(b)
         self.isLog = b
@@ -2202,7 +2282,7 @@ class BlockPlot(QWidget):
         else:
             self.plot.bottom().range = QCPRange(0, self.x_max*1.1)
             self.plot.left().range = QCPRange(0, self.y_max*1.1)
-        self.plot.replot()        
+        self.plot.replot()
 
     def updatePlot(self):
         self.plot.clearGraphs()
@@ -2253,6 +2333,10 @@ class BlockPlot(QWidget):
 
         block = self.settingsWidget.calibration.blocks[self.bn]
         df = block.dataFrameForChannel(channel)
+        # Users may have created their own RM files, and put 0 in for missing values.
+        # This will mess with calculations below, so remove those here
+        df = df[df[f'{channel}_RMppm'] != 0]
+
         slope = block.slope(channel)
         intercept = block.intercept(channel)
 
@@ -2343,7 +2427,7 @@ class BlockPlot(QWidget):
         if self.isLog:
             self.plot.bottom().range = QCPRange(0.001, self.x_max*5)
             self.plot.left().range = QCPRange(1, self.y_max*5)
-        else:    
+        else:
             self.plot.bottom().range = QCPRange(0, self.x_max*1.1)
             self.plot.left().range = QCPRange(0, self.y_max * 1.1)
 
@@ -2519,6 +2603,7 @@ class FractionationPlot(Plot):
         self.setBackground(CUI().tabBackgroundColor())
         self.bottom().label = 'Beam seconds'
         self.setLegendVisible(True)
+        self.setLegendAlignment(Qt.AlignBottom | Qt.AlignRight)
 
         self.msg = OverlayMessage(
                     self, 'Warning',
@@ -2529,7 +2614,7 @@ class FractionationPlot(Plot):
         self.msg.hide()
 
     def updatePlot(self):
-        self.clearGraphs()  
+        self.clearGraphs()
         self.clearItems()
         try:
             channel = self.settingsWidget.selectedChannelNames[0]
@@ -3074,6 +3159,7 @@ class SettingsWidget(QWidget):
         drs.setDefaultSetting('AffinityCorrection', False)
         drs.setDefaultSetting('BlockFindingMethod', 'Simple')
         drs.setDefaultSetting('NClusters', -1)
+        drs.setDefaultSetting('ISCriteria', [])
 
         drs.setSetting('AffinityCorrection', False)
 
@@ -3209,7 +3295,7 @@ class SettingsWidget(QWidget):
 
         return False
 
-    def setupChannelCBs(self):        
+    def setupChannelCBs(self):
         cbs = [self.setIndexChannelCBox, self.maskChannelCBox, self.bsChannelComboBox]
 
         for cb in cbs:
@@ -3413,7 +3499,7 @@ class SettingsWidget(QWidget):
     def setup3dPlot(self):
         self.plot3d = Plot3d(self)
         self.plot3d.setLabelFont(QFont('Helvetica', 16, QFont.Bold))
-        self.tabWidget.addTab(self.plot3d, '3D')        
+        self.tabWidget.addTab(self.plot3d, '3D')
         self.resetViewButton = OverlayButton(self.plot3d, 'TopLeft', 10, 10)
         self.resetViewButton.setIcon(CUI().icon('cube'))
         self.resetViewButton.setFixedSize(25, 25)
@@ -3462,7 +3548,7 @@ class SettingsWidget(QWidget):
         #self.jackPlot = JacksonPlot(self)
         #self.tabWidget.addTab(self.jackPlot, 'Condensation T')
 
-    def updateBlocks(self):        
+    def updateBlocks(self):
         if not drs.setting('MasterExternal') or drs.setting('MasterExternal') not in self.externalsInUse():
             print(f'Master external is invalid...')
             if self.externalsInUse() and len(self.externalsInUse()) > 0:
@@ -3473,7 +3559,7 @@ class SettingsWidget(QWidget):
             else:
                 print('   ... because there are no externals in use.')
 
-        if self.blockRMs != self.externalsInUse():            
+        if self.blockRMs != self.externalsInUse():
             try:
                 self.calibration.updateBlocks()
             except MissingRMGroupError:
@@ -3489,6 +3575,9 @@ class SettingsWidget(QWidget):
 
         for bi, block in enumerate(self.calibration.blocks):
             df = block.dataFrameForChannel(channelName)
+            # Users may have created their own RM files, and put 0 in for missing values.
+            # This will mess with calculations below, so remove those here
+            df = df[df[f'{channelName}_RMppm'] != 0]
             mx = np.append(mx, df['sel_mid_time'])
             msx = np.append(msx, df['sel_duration'])
             my = np.append(my, df[f'{channelName}_RMppm'])
@@ -3752,3 +3841,382 @@ class SettingsWidget(QWidget):
 
 def settingsWidget():
     drs.setSettingsWidget(SettingsWidget())
+
+
+class MCLineEdit(QLineEdit):
+
+    def __init__(self, completer, delimiter=',', parent=None):
+        super().__init__(parent)
+        self.mc = completer
+        self.mc.setWidget(self)
+        self.mc.setCaseSensitivity(Qt.CaseInsensitive)
+        self.mc.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
+        self.mc.activated.connect(self.insertCompletion)
+        self.delimiter = delimiter
+
+    def keyPressEvent(self, event):
+        QLineEdit.keyPressEvent(self, event)
+        if not self.mc or self.text == '':
+            return
+
+        self.mc.setCompletionPrefix(self.cursorWord(self.text))
+        if len(self.mc.completionPrefix) < 1:
+            self.mc.popup().hide()
+            return
+
+        self.mc.complete()
+
+    def cursorWord(self, sentence):
+        p = sentence.rfind(self.delimiter)
+        if p == -1:
+            return sentence
+
+        return sentence[p + 1:]
+
+    def insertCompletion(self, text):
+        p = self.text.rfind(self.delimiter)
+        if p == -1:
+            self.setText(text)
+        else:
+            self.setText(self.text[:p+1]+text)
+
+        self.textEdited.emit(self.text)
+
+
+class PTSettingsWidget(QWidget):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        settings = QSettings()
+        self.ui_path = settings.value("Paths/DataReductionSchemesPath")
+        self.ui_file = QFile(self.ui_path + "/3d_trace_elements_pt.ui")
+
+        self.setLayout(QVBoxLayout())
+        if not self.ui_file.open(QIODevice.ReadOnly):
+            raise RuntimeError('Could not load settings ui')
+
+        ui = QUiLoader().load(self.ui_file, self)
+        self.layout().addWidget(ui)
+        self.layout().setContentsMargins(0, 0, 0, 0)
+
+        # Set DRS defaults:
+        drs.setDefaultSetting("Mask", False)
+        drs.setDefaultSetting('IndexChannel', '')
+        drs.setDefaultSetting('MaskMethod', 'Laser log')
+        drs.setDefaultSetting('MaskChannel', '')
+        drs.setDefaultSetting("MaskCutoff", 0.1)
+        drs.setDefaultSetting("MaskTrim", 0.0)
+        drs.setDefaultSetting("NormalizeExternals", True)
+        drs.setDefaultSetting("UseIntStds", True)
+        drs.setDefaultSetting('SplineType', 'Spline_AutoSmooth')
+        drs.setDefaultSetting('MasterExternal', '')
+        drs.setDefaultSetting('BeamSecondsMethod', 'Laser log')
+        drs.setDefaultSetting('BeamSecondsChannel', '')
+        drs.setDefaultSetting('BeamSecondsValue', 1000.)
+        drs.setDefaultSetting('AffinityCorrection', False)
+        drs.setDefaultSetting('BlockFindingMethod', 'Simple')
+        drs.setDefaultSetting('NClusters', -1)
+        drs.setDefaultSetting('PreserveISProperties', False)
+        drs.setDefaultSetting('ISCriteria', [])
+
+        # Get refs to UI elements:
+        self.extTable = ui.findChild(QTableWidget, 'extTable')
+        self.addExtButton = ui.findChild(QToolButton, 'addExtButton')
+        self.removeExtButton = ui.findChild(QToolButton, 'removeExtButton')
+        self.intGroupBox = ui.findChild(QGroupBox, 'intGroupBox')
+        self.intTable = ui.findChild(QTableWidget, 'intTable')
+        self.addIntButton = ui.findChild(QToolButton, 'addIntButton')
+        self.removeIntButton = ui.findChild(QToolButton, 'removeIntButton')
+        self.indexLineEdit = ui.findChild(QLineEdit, 'indexChannelLineEdit')
+        self.maskCheckBox = ui.findChild(QCheckBox, 'maskCheckBox')
+        self.maskMethodComboBox = ui.findChild(QComboBox, 'maskMethodComboBox')
+        self.maskChannelLineEdit = ui.findChild(QLineEdit, "maskChannelLineEdit")
+        self.maskChannelLabel = ui.findChild(QLabel, 'maskChannelLabel')
+        self.maskTrimLineEdit = ui.findChild(QLineEdit, 'maskTrimLineEdit')
+        self.maskTrimLabel = ui.findChild(QLabel, 'maskTrimLabel')
+        self.maskValueLineEdit = ui.findChild(QLineEdit, 'maskValueLineEdit')
+        self.maskValueLabel = ui.findChild(QLabel, 'maskValueLabel')
+        self.blockComboBox = ui.findChild(QComboBox, 'blockComboBox')
+        self.blockCountLabel = ui.findChild(QLabel, 'blockCountLabel')
+        self.blockCountSpinBox = ui.findChild(QSpinBox, 'blockCountSpinBox')
+        self.normalizeCheckBox = ui.findChild(QCheckBox, 'normalizeCheckBox')
+        self.normalizeComboBox = ui.findChild(QComboBox, 'normalizeComboBox')
+        self.splineComboBox = ui.findChild(QComboBox, 'splineComboBox')
+        self.splineComboBox.addItems([
+            'MeanMean',
+            'MeanMedian',
+            'LinearFit',
+            'WeightedLinearFit',
+            'StepLinear',
+            'StepForward',
+            'StepBackward',
+            'StepAverage',
+            'Nearest',
+            'Akima',
+            'Spline_NoSmoothing',
+            'Spline_Smooth1',
+            'Spline_Smooth2',
+            'Spline_Smooth3',
+            'Spline_Smooth4',
+            'Spline_Smooth5',
+            'Spline_Smooth6',
+            'Spline_Smooth7',
+            'Spline_Smooth8',
+            'Spline_Smooth9',
+            'Spline_Smooth10',
+            'Spline_AutoSmooth'
+        ])
+        self.bsMethodComboBox = ui.findChild(QComboBox, 'bsMethodComboBox')
+        self.bsChannelLineEdit = ui.findChild(QLineEdit, 'bsChannelLineEdit')
+        self.bsChannelLabel = ui.findChild(QLabel, 'bsChannelLabel')
+        self.bsValueLineEdit = ui.findChild(QLineEdit, 'bsValueLineEdit')
+        self.bsValueLabel = ui.findChild(QLabel, 'bsValueLabel')
+        self.affinityCheckBox = ui.findChild(QCheckBox, 'affinityCheckBox')
+        self.criteriaButton = ui.findChild(QToolButton, 'criteriaButton')
+        self.preserveISCheckBox = ui.findChild(QCheckBox, 'preserveISCheckBox')
+
+        # Setup UI elements:
+        self.addExtButton.setIcon(CUI().icon('plus'))
+        self.addIntButton.setIcon(CUI().icon('plus'))
+        self.removeIntButton.setIcon(CUI().icon('minus'))
+        self.removeExtButton.setIcon(CUI().icon('minus'))
+        self.criteriaButton.setIcon(CUI().icon('edit'))
+        tbs = [self.addExtButton, self.addIntButton, self.removeExtButton, self.removeIntButton, self.criteriaButton]
+        [b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon) for b in tbs]
+
+        self.normalizeComboBox.addItems(data.referenceMaterialNames())
+        self.blockComboBox.addItems(['Assigned', 'Simple', 'Clustering', 'Auto clustering'])
+
+        self.extTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.extTable.verticalHeader().setVisible(False)
+        self.extTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        self.intTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.intTable.verticalHeader().setVisible(False)
+        self.intTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        # Todo: Restore settings
+        def showBlockCount(b):
+            self.blockCountLabel.setVisible(b)
+            self.blockCountSpinBox.setVisible(b)
+
+        def showBSOptions(b):
+            self.bsValueLabel.setVisible(b)
+            self.bsValueLineEdit.setVisible(b)
+            self.bsChannelLabel.setVisible(b)
+            self.bsChannelLineEdit.setVisible(b)
+
+        def showMaskOptions(b):
+            self.maskChannelLabel.setVisible(b)
+            self.maskChannelLineEdit.setVisible(b)
+            self.maskValueLabel.setVisible(b)
+            self.maskValueLineEdit.setVisible(b)
+            self.maskTrimLabel.setVisible(b)
+            self.maskTrimLineEdit.setVisible(b)
+
+        def toggleMask(b):
+            self.maskMethodComboBox.setEnabled(b)
+            showMaskOptions(self.maskMethodComboBox.currentText=='Cutoff')
+
+        self.splineComboBox.setCurrentText(drs.setting('SplineType'))
+        self.normalizeCheckBox.setChecked(drs.setting('NormalizeExternals'))
+        self.normalizeComboBox.setCurrentText(drs.setting('MasterExternal'))
+        self.blockComboBox.setCurrentText(drs.setting('BlockFindingMethod'))
+        self.blockCountSpinBox.setValue(drs.setting('NClusters'))
+        self.intGroupBox.setChecked(drs.setting('UseIntStds'))
+        self.indexLineEdit.setText(drs.setting('IndexChannel'))
+        self.bsMethodComboBox.setCurrentText(drs.setting('BeamSecondsMethod'))
+        self.bsChannelLineEdit.setText(drs.setting('BeamSecondsChannel'))
+        self.bsValueLineEdit.setText(str(drs.setting('BeamSecondsValue')))
+        self.maskCheckBox.setChecked(drs.setting('Mask'))
+        self.maskMethodComboBox.setCurrentText(drs.setting('MaskMethod'))
+        self.maskChannelLineEdit.setText(drs.setting('MaskChannel'))
+        self.maskValueLineEdit.setText(str(drs.setting('MaskCutoff')))
+        self.maskTrimLineEdit.setText(str(drs.setting('MaskTrim')))
+        self.preserveISCheckBox.setChecked(drs.setting('PreserveISProperties'))
+
+        showBlockCount(drs.setting('BlockFindingMethod') == 'Clustering')
+        showBSOptions('threshold' in drs.setting('BeamSecondsMethod'))
+        showMaskOptions(drs.setting('MaskMethod') == 'Cutoff')
+        toggleMask(drs.setting('Mask'))
+
+        if 'PTExternal' in drs.settings():
+            for pt_ext in drs.setting('PTExternal'):
+                self.addExt(pt_ext)
+        else:
+            self.addExt()
+
+        if 'PTInternal' in drs.settings():
+            for pt_is in drs.setting('PTInternal'):
+                self.addInt(pt_is)
+        else:
+            self.addInt()
+
+        # Make connections
+        self.blockComboBox.textActivated.connect(lambda t: drs.setSetting('BlockFindingMethod', t))
+        self.blockCountSpinBox.valueChanged.connect(lambda v: drs.setSetting('NClusters', int(v)))
+        self.normalizeCheckBox.toggled.connect(lambda b: drs.setSetting('NormalizeExternals', b))
+        self.normalizeComboBox.textActivated.connect(lambda t: drs.setSetting('MasterExternal', t))
+        self.splineComboBox.textActivated.connect(lambda t: drs.setSetting('SplineType', t))
+        self.bsMethodComboBox.textActivated.connect(lambda t: drs.setSetting('BeamSecondsMethod', t))
+        self.affinityCheckBox.toggled.connect(lambda b: drs.setSetting('AffinityCorrection', b))
+        self.indexLineEdit.textEdited.connect(lambda t: drs.setSetting('IndexChannel', t))
+        self.intGroupBox.toggled.connect(lambda b: drs.setSetting('UseIntStds', b))
+        self.extTable.itemChanged.connect(self.updateExtInfo)
+        self.intTable.itemChanged.connect(self.updateIntInfo)
+        self.addExtButton.clicked.connect(lambda: self.addExt())
+        self.removeExtButton.clicked.connect(self.removeExt)
+        self.addIntButton.clicked.connect(lambda: self.addInt())
+        self.removeIntButton.clicked.connect(self.removeInt)
+        self.criteriaButton.clicked.connect(self.editCriteria)
+        self.blockComboBox.textActivated.connect(lambda t: showBlockCount(t == 'Clustering'))
+        self.bsMethodComboBox.textActivated.connect(lambda t: showBSOptions('threshold' in t))
+        self.maskMethodComboBox.textActivated.connect(lambda t: showMaskOptions(t == 'Cutoff'))
+        self.maskCheckBox.toggled.connect(lambda b: toggleMask(b))
+        self.preserveISCheckBox.toggled.connect(lambda b: drs.setSetting('PreserveISProperties', b))
+
+    def addExt(self, props=None):
+        row = self.extTable.rowCount
+        self.extTable.insertRow(row)
+
+        nameItem = QTableWidgetItem()
+        nameItem.setToolTip("Name of input channel")
+        standardsItem = QTableWidgetItem()
+        modelItem = QTableWidgetItem('ODR')
+        zeroItem = QTableWidgetItem()
+        zeroItem.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+        zeroItem.setCheckState(Qt.Unchecked)
+        fracItem = QTableWidgetItem('None')
+
+        if props is not None:
+            nameItem.setText(props['name'])
+            standardsItem.setText(props['standards'])
+            modelItem.setText(props['model'])
+            cs = Qt.Checked if props['zero'] else Qt.Unchecked
+            zeroItem.setCheckState(cs)
+            fracItem.setText(props['frac'])
+
+        if row == 0:
+            nameItem.setFlags(nameItem.flags() ^ Qt.ItemIsEditable)
+            nameItem.setText('Default')
+
+        self.extTable.setItem(row, 0, nameItem)
+        self.extTable.setItem(row, 1, standardsItem)
+        self.extTable.setItem(row, 2, modelItem)
+        self.extTable.setItem(row, 3, zeroItem)
+        self.extTable.setItem(row, 4, fracItem)
+
+        completer = QCompleter(data.referenceMaterialNames())
+        standardsLineEdit = MCLineEdit(completer, ',')
+        standardsLineEdit.setText(standardsItem.text())
+        standardsLineEdit.setToolTip("List RMs here (comma separated)")
+        self.extTable.setCellWidget(row, 1, standardsLineEdit)
+        standardsLineEdit.textEdited.connect(lambda t: standardsItem.setText(t))
+
+        modelComboBox = QComboBox()
+        modelComboBox.addItems(['ODR', 'OLS', 'WLS', 'RLM', 'York'])
+        modelComboBox.setCurrentText(modelItem.text())
+        self.extTable.setCellWidget(row, 2, modelComboBox)
+        modelComboBox.textActivated.connect(lambda t: modelItem.setText(t))
+
+        fracComboBox = QComboBox()
+        fracComboBox.addItems(['None', 'Linear', 'Spline'])
+        fracComboBox.setCurrentText(fracItem.text())
+        self.extTable.setCellWidget(row, 4, fracComboBox)
+        fracComboBox.textActivated.connect(lambda t: fracItem.setText(t))
+
+    def removeExt(self):
+        rows = self.extTable.selectionModel().selectedRows()
+        if len(rows) > 0:
+            ri = rows[0].row()
+            if ri == 0:
+                QMessageBox.information(self, 'Remove external', 'Cannot remove the default row.')
+                return
+            self.extTable.removeRow(ri)
+
+    def updateExtInfo(self):
+        info = []
+
+        for row in range(self.extTable.rowCount):
+            info.append({
+                'name': self.extTable.item(row, 0).text(),
+                'standards': self.extTable.item(row, 1).text(),
+                'model': self.extTable.item(row, 2).text(),
+                'zero': self.extTable.item(row, 3).checkState() == Qt.Checked,
+                'frac': self.extTable.item(row, 4).text()
+            })
+        drs.setSetting('PTExternal', info)
+
+    def addInt(self, props=None):
+        row = self.intTable.rowCount
+        self.intTable.insertRow(row)
+
+        groupItem = QTableWidgetItem()
+        selectionItem = QTableWidgetItem()
+        elementsItem = QTableWidgetItem()
+        valueItem = QTableWidgetItem()
+        unitsItem = QTableWidgetItem()
+        affinityItem = QTableWidgetItem()
+
+        if props is not None:
+            groupItem.setText(props['group'])
+            selectionItem.setText(props['selection'])
+            elementsItem.setText(props['elements'])
+            valueItem.setText(props['value'])
+            unitsItem.setText(props['units'])
+            affinityItem.setText(props['affinity'])
+
+        if row == 0:
+            groupItem.setFlags(groupItem.flags() ^ Qt.ItemIsEditable)
+            groupItem.setText('Default')
+            selectionItem.setFlags(selectionItem.flags() ^ Qt.ItemIsEditable)
+            selectionItem.setText('Default')
+
+        self.intTable.setItem(row, 0, groupItem)
+        self.intTable.setItem(row, 1, selectionItem)
+        self.intTable.setItem(row, 2, elementsItem)
+        self.intTable.setItem(row, 3, valueItem)
+        self.intTable.setItem(row, 4, unitsItem)
+        self.intTable.setItem(row, 5, affinityItem)
+
+        unitsComboBox = QComboBox()
+        unitsComboBox.addItems(['ppm', 'ppb', 'wtpc', 'wtpc_oxide'])
+        unitsComboBox.setCurrentText(unitsItem.text())
+        self.intTable.setCellWidget(row, 4, unitsComboBox)
+        unitsComboBox.textActivated.connect(lambda t: unitsItem.setText(t))
+
+    def removeInt(self):
+        rows = self.intTable.selectionModel().selectedRows()
+        if len(rows) > 0:
+            ri = rows[0].row()
+            if ri == 0:
+                QMessageBox.information(self, 'Remove internal', 'Cannot remove the default row.')
+                return
+            self.intTable.removeRow(ri)
+
+    def updateIntInfo(self):
+        info = []
+        for row in range(self.intTable.rowCount):
+            info.append({
+                'group': self.intTable.item(row, 0).text(),
+                'selection': self.intTable.item(row, 1).text(),
+                'elements': self.intTable.item(row, 2).text(),
+                'value': self.intTable.item(row, 3).text(),
+                'units': self.intTable.item(row, 4).text(),
+                'affinity': self.intTable.item(row, 5).text()
+            })
+        drs.setSetting('PTInternal', info)
+
+    def editCriteria(self):
+        d = CriteriaDialog()
+        d.table.model().setCriteria(drs.setting('ISCriteria'))
+
+        if d.exec_() == QDialog.Rejected:
+            return
+
+        drs.setSetting('ISCriteria', d.criteria())
+
+def ptSettingsWidget():
+    sw = PTSettingsWidget()
+    drs.setPTSettingsWidget(sw)
