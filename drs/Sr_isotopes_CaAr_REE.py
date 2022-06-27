@@ -503,6 +503,26 @@ def runDRS():
 
     StdCorr_Sr8786 = Sr8786_Corr * StdValue_Sr87_86 / StdSpline_Sr87_86
 
+    # Calculate Std Corrected 84Sr/86Sr
+    try:
+        StdSpline_Sr84_86 = data.spline(rmName, 'Sr8486_Corr').data()
+        StdValue_Sr84_86 = data.referenceMaterialData(rmName)["84Sr/86Sr"].value()
+        StdCorr_Sr8486 = Sr8486_Corr * StdValue_Sr84_86 / StdSpline_Sr84_86
+        data.createTimeSeries('StdCorr_Sr8486', data.Output, indexChannel.time(), StdCorr_Sr8486)
+    except:
+        IoLog.InformationWithOrigin("Could not calculate 84Sr/86Sr ratio. Please check that your primary RM has a 84Sr/86Sr ratio value.", "Combined Sr Isotope DRS")
+
+    # Calculate Std Corrected 84Sr/88Sr
+    try:
+        StdSpline_Sr84_88 = data.spline(rmName, 'Sr8488_Corr').data()
+        StdValue_Sr84_88 = data.referenceMaterialData(rmName)["84Sr/88Sr"].value()
+        StdCorr_Sr8488 = Sr8488_Corr * StdValue_Sr84_88 / StdSpline_Sr84_88
+        data.createTimeSeries('StdCorr_Sr8488', data.Output, indexChannel.time(), StdCorr_Sr8488)
+    except:
+        IoLog.InformationWithOrigin("Could not calculate 84Sr/88Sr ratio. Please check that your primary RM has a 84Sr/88Sr ratio value.", "Combined Sr Isotope DRS")
+
+
+
     # Now generate age-corrected values (using the observed Rb/Sr ratio)
     # NOTE: The line below used Sr8786_Corr. Changed to use
     # Std Corrected data (BP, 2021-02-01)
