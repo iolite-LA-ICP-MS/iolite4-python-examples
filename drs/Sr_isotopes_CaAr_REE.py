@@ -648,7 +648,7 @@ def runDRS():
                 fit_y = params[0] + params[1] * np.exp(-params[2] * fit_x)
 
             except RuntimeError as e:
-                if 'Optimal parameters not found: Number of calls' in e.message:
+                if 'Optimal parameters not found: Number of calls' in str(e):
 
                     IoLog.warning('Could not find fit to data with Exp model. Switching to Linear model.')
 
