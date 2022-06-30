@@ -512,6 +512,15 @@ def runDRS():
     except:
         IoLog.informationWithOrigin("Could not calculate 84Sr/86Sr ratio. Please check that your primary RM has a 84Sr/86Sr ratio value.", "Combined Sr Isotope DRS")
 
+    if 'REE' in corrections:
+        try:
+            StdSpline_Sr84_86_b = data.spline(rmName, 'Sr8486_Corr_b').data()
+            StdValue_Sr84_86 = data.referenceMaterialData(rmName)["84Sr/86Sr"].value()
+            StdCorr_Sr8486_b = Sr8486_Corr_b * StdValue_Sr84_86 / StdSpline_Sr84_86_b
+            data.createTimeSeries('StdCorr_Sr8486_b', data.Output, indexChannel.time(), StdCorr_Sr8486_b)
+        except:
+            IoLog.informationWithOrigin("Could not calculate 84Sr/86Sr_b ratio. Please check that your primary RM has a 84Sr/86Sr ratio value.", "Combined Sr Isotope DRS")
+
     # Calculate Std Corrected 84Sr/88Sr
     try:
         StdSpline_Sr84_88 = data.spline(rmName, 'Sr8488_Corr').data()
@@ -521,7 +530,14 @@ def runDRS():
     except:
         IoLog.informationWithOrigin("Could not calculate 84Sr/88Sr ratio. Please check that your primary RM has a 84Sr/88Sr ratio value.", "Combined Sr Isotope DRS")
 
-
+    if 'REE' in corrections:
+        try:
+            StdSpline_Sr84_88_b = data.spline(rmName, 'Sr8488_Corr_b').data()
+            StdValue_Sr84_88 = data.referenceMaterialData(rmName)["84Sr/88Sr"].value()
+            StdCorr_Sr8488_b = Sr8488_Corr_b * StdValue_Sr84_88 / StdSpline_Sr84_88_b
+            data.createTimeSeries('StdCorr_Sr8488_b', data.Output, indexChannel.time(), StdCorr_Sr8488_b)
+        except:
+            IoLog.informationWithOrigin("Could not calculate 84Sr/88Sr_b ratio. Please check that your primary RM has a 84Sr/88Sr ratio value.", "Combined Sr Isotope DRS")
 
     # Now generate age-corrected values (using the observed Rb/Sr ratio)
     # NOTE: The line below used Sr8786_Corr. Changed to use
@@ -559,9 +575,9 @@ def runDRS():
         groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
 
         if 'REE' in corrections:
-            data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
+            data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr8786_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
         else:
-            data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86")], data.timeSeries("Sr8786_Corr"), rmName)
+            data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr8786")], data.timeSeries("Sr8786_Corr"), rmName)
 
 
     # CaPO Plot and Correction
