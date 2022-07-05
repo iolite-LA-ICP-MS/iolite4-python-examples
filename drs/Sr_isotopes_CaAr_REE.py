@@ -502,6 +502,7 @@ def runDRS():
         return
 
     StdCorr_Sr8786 = Sr8786_Corr * StdValue_Sr87_86 / StdSpline_Sr87_86
+    data.createTimeSeries('StdCorr_Sr8786', data.Output, indexChannel.time(), StdCorr_Sr8786)
 
     # Calculate Std Corrected 84Sr/86Sr
     try:
