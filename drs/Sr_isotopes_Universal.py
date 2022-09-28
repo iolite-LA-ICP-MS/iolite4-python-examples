@@ -1,9 +1,9 @@
 #/ Type: DRS
 #/ Name: Sr Isotopes Universal
-#/ Authors: Bence Paul, Joe Petrus, Graham Hagen-Peter and author(s) of Sr_isotopes_Total_NIGL.ipf
+#/ Authors: Bence Paul, Joe Petrus, Graham Hagen-Peter, author(s) of Sr_isotopes_Total_NIGL.ipf, and various authors of previous Iolite Sr isotope DRS
 #/ Description: A Sr isotopes DRS that can correct for different combinations of interferences
-#/ References: None
-#/ Version: 2.0
+#/ References: Mulder et al. (hopefully)
+#/ Version: 1.0
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
@@ -143,7 +143,7 @@ def runDRS():
     print(settings)
 
     if settings["IndexChannel"] not in data.timeSeriesNames(data.Input):
-        IoLog.errorWithOrigin("Index channel not found. DRS cannot continue", "Sr Isotopes CaAr REE DRS")
+        IoLog.errorWithOrigin("Index channel not found. DRS cannot continue", "Sr Isotopes Universal DRS")
         drs.message("DRS did not finish. Please check Messages")
         drs.progress(100)
         drs.finished()
@@ -156,7 +156,6 @@ def runDRS():
     cutoff = settings["MaskCutoff"]
     trim = settings["MaskTrim"]
 
-#from Graham's DRS
     Rb_Beta_adjust = settings["Rb_Beta_adjust"]
     RbBias = settings["RbBias"]
     Ref_Rb_Beta = settings["ReferenceMaterialRb"]
@@ -174,14 +173,8 @@ def runDRS():
     ProportionCaAr = settings["ProportionCaAr"]
     ProportionNaNi = settings["ProportionNaNi"]
     Age = settings["Age"]
-
-#old ones
-    #Age = settings["Age"]
-    #RbBias = settings["RbBias"]
-    #CaArBias = settings["CaArBias"]
     propErrors = settings["PropagateError"]
-    #corrections = settings["Corrections"]
-
+ 
     # Create debug messages for the settings being used
     IoLog.debug("indexChannelName = %s" % indexChannel.name)
     IoLog.debug("Masking data  = True" if maskOption else "Masking data  = False")
@@ -282,11 +275,6 @@ def runDRS():
         pass
 
     try:
-        total84 = data.timeSeriesList(data.Intermediate, {'Mass': '84'})[0].data()
-    except:
-        pass
-
-    try:
         total83_5 = data.timeSeriesList(data.Intermediate, {'Mass': '83.5'})[0].data()
     except:
         pass
@@ -307,21 +295,6 @@ def runDRS():
         pass  
 
 
-    '''Note that this is not baseline subtracted as it is intended to be used as a
-    reference of the raw counts
-    '''
-   # Raw83 = data.timeSeriesList(data.Input, {'Mass': '83'})[0].data()
-
-    drs.message("Subtracting interferences...")
-    drs.progress(40)
-
-    #True masses from NIST; Monoatomic isotopice abundances from IUPAC subcommittee for Isotopic Abundance Measurements (1999) compiled by U. of Alberta; Polyatomic isotopic abundances calculated from Scientific Instrument Services "Isotope Distribution Calculator" (sisweb.com/mstools/isotope.htm)
-    Sr84mass = 83.9134191
-    Sr86mass = 85.9092606
-    Sr87mass = 86.9088775
-    Sr88mass = 87.9056125
-    Rb85mass = 84.9117897379
-    Rb87mass = 86.9091805310
 
     if ProportionCaAr < 0 or ProportionCaAr >1:
     	IoLog.error("The proportion CaAr must be between 0 and 1.")
@@ -340,12 +313,23 @@ def runDRS():
 
 ##UNIVERSAL DRS interference subtraction combinations here
 
+    #True masses from NIST; Monoatomic isotopice abundances from IUPAC subcommittee for Isotopic Abundance Measurements (1999) compiled by U. of Alberta; Polyatomic isotopologue abundances calculated from Scientific Instrument Services "Isotope Distribution Calculator" (sisweb.com/mstools/isotope.htm)
+    Sr84mass = 83.9134191
+    Sr86mass = 85.9092606
+    Sr87mass = 86.9088775
+    Sr88mass = 87.9056125
+    Rb85mass = 84.9117897379
+    Rb87mass = 86.9091805310
+
 
     Sr88_86_reference = 8.37520938 #Reciprocal of 86Sr/88Sr = 0.1194 from Konter & Storm (2014, Chem. Geol)
 
     Rb87_85_reference = 0.38571 
 
     PFract = (np.log(Sr88_86_reference/(total88/total86)))/(np.log(Sr88mass/Sr86mass))##calculate preliminary fractionation factor
+
+    drs.message("Subtracting interferences...")
+    drs.progress(40)
 
 ##REE plus/minus Ca-Ar-CaCa and/or NaNi-CaAlO subtractions
 
@@ -397,7 +381,7 @@ def runDRS():
     			except:
     				pass
 
-    			residual_84_CaAr = residual_84_REE -   (((ProportionCaAr)*residual_83_REE * 2.078 /0.139) / np.power((83.92008 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 4.048 /0.272) / np.power((83.91808 / 82.92136), PFract_CaAr*CaArBias))
+    			residual_84_CaAr = residual_84_REE - (((ProportionCaAr)*residual_83_REE * 2.078 /0.139) / np.power((83.92008 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 4.048 /0.272) / np.power((83.91808 / 82.92136), PFract_CaAr*CaArBias))
     			residual_85_CaAr = residual_85_REE - (((1-ProportionCaAr)*residual_83_REE * 0.0019 /0.272) / np.power((84.91739 / 82.92136), PFract_CaAr*CaArBias))
     			residual_87_CaAr = residual_87_REE - (((1-ProportionCaAr)*residual_83_REE * 0.0056 /0.272) / np.power((86.91426 / 82.92136), PFract_CaAr*CaArBias))
 
@@ -431,7 +415,7 @@ def runDRS():
     		residual_84_CaAr = residual_84_REE
     		residual_85_CaAr = residual_85_REE
     		residual_87_CaAr = residual_87_REE
-    	#endif
+    	
 		
     	if NaNi_CaAlO_subtract:
     		if CaAr_83:
@@ -454,7 +438,7 @@ def runDRS():
     		residual_86_NaNi = residual_86_CaAr
     		residual_87_NaNi = residual_87_CaAr
     		residual_88_NaNi = residual_88_CaAr
-    	#endif
+    	
 
 ##CaAr-CaCa plus/minus Na-Ni-CaAlO subtractions
 
@@ -490,7 +474,7 @@ def runDRS():
     			except:
     				pass
 
-    			residual_84_CaAr = total84 -   (((ProportionCaAr)*total82 * 2.078 /0.649) / np.power((83.92008 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total82 * 4.048 /1.260) / np.power((83.91808 / 81.92121), PFract_CaAr*CaArBias))
+    			residual_84_CaAr = total84 - (((ProportionCaAr)*total82 * 2.078 /0.649) / np.power((83.92008 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total82 * 4.048 /1.260) / np.power((83.91808 / 81.92121), PFract_CaAr*CaArBias))
     			residual_85_CaAr = total85 - (((1-ProportionCaAr)*total82 * 0.0019 /1.260) / np.power((84.91739 / 81.92121), PFract_CaAr*CaArBias))
     			residual_87_CaAr = total87 - (((1-ProportionCaAr)*total82 * 0.0056 /1.260) / np.power((86.91426 / 81.92121), PFract_CaAr*CaArBias))
 
@@ -508,7 +492,7 @@ def runDRS():
     		residual_84_CaAr = total84
     		residual_85_CaAr = total85
     		residual_87_CaAr = total87
-    	#endif
+    	
 			
     	if NaNi_CaAlO_subtract:
 
@@ -534,8 +518,6 @@ def runDRS():
     		residual_87_NaNi = residual_87_CaAr
     		residual_88_NaNi = residual_88_CaAr
 
-    	#endif
-    #endif
 	
     #final=risidualNaNi
     Sr84 = residual_84_NaNi
@@ -592,7 +574,6 @@ def runDRS():
     	try:
          RefRbValue_Sr87_86 = data.referenceMaterialData(Ref_Rb_Beta)["87Sr/86Sr"].value()
          BetaRb = np.log(((SrRb87)-(RefRbValue_Sr87_86 /np.power((Sr87mass / Sr86mass), BetaSr)*Sr86))/(Rb85*Rb87_85_reference))/np.log(Rb85mass/Rb87mass)
-         #BetaRb = np.log(((SrRb87)-(RefRbValue_Sr87_86 /np.power((Sr87mass / Sr86mass), BetaSr)*Sr86))/(Rb85*Rb87_85_reference))/np.log(Rb87mass/Rb85massRb87mass)
          int_channel_names += ['BetaRb']
          int_channels += [BetaRb]
          for name, channel in zip(int_channel_names, int_channels):
@@ -677,7 +658,7 @@ def runDRS():
     	try:
          Sr_conc = data.referenceMaterialData(Ref_Rb_Sr_elemental)["Sr"].value()
          Rb_conc = data.referenceMaterialData(Ref_Rb_Sr_elemental)["Rb"].value()
-         StdSpline_RbSr = data.spline(Ref_Rb_Sr_elemental, "Sr87_86_CorrRb").data()
+         StdSpline_RbSr = data.spline(Ref_Rb_Sr_elemental, "Rb87_Sr86_CorrRb").data()
     	except:
          IoLog.error("The Combined Sr DRS requires Rb/Sr Ref Material selections to proceed.")
          drs.message("DRS did not finish. Please check Messages")
@@ -701,14 +682,14 @@ def runDRS():
     #Output channels
 
     try:
-    	output_channels_names += ['StdCorr_Sr87_86','Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
+    	output_channels_names += ['Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
     	output_channels += [StdCorr_Sr87_86,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
     	for name, channel in zip(output_channels_names, output_channels):
         	data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
 
     except:
 
-    	output_channels_names = ['StdCorr_Sr87_86','Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
+    	output_channels_names = ['Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
     	output_channels = [StdCorr_Sr87_86,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
     	for name, channel in zip(output_channels_names, output_channels):
         	data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
@@ -894,7 +875,6 @@ def settingsWidget():
     drs.setSetting("MaskChannel", defaultChannelName)
     drs.setSetting("MaskCutoff", 0.05)
     drs.setSetting("MaskTrim", 0.0)
-#from Graham's DRS
     drs.setSetting("Rb_Beta_adjust", False)
     drs.setSetting("RbBias", 1.)
     drs.setSetting("ReferenceMaterialRb", "G_BCR2G")
@@ -914,25 +894,13 @@ def settingsWidget():
     drs.setSetting("CaArBias", 1.)
     drs.setSetting("NaNi_CaAlO_subtract", False)
     drs.setSetting("NaNiBias", 1.)
-#
-    #drs.setSetting("Age", 0.)
-    #drs.setSetting("Corrections", "CaAr + REE")
-    #drs.setSetting("Dy_Er", 1.8)
-    #drs.setSetting("Lu_Yb", 7.0)
-    #drs.setSetting("RbBias", 0.)
-    #drs.setSetting("CaArBias", 0.)
-    #drs.setSetting("Sr88_86_reference", 8.37520938)  #Konter & Storm (2014)
-    #drs.setSetting("Rb87_85_reference", 0.385710)    #Konter & Storm (2014)
-#
     drs.setSetting("CaPOEqType", 'Linear')
     drs.setSetting("CaPO_RMs", [])
-
     drs.setSetting("PropagateError", False)
 
     settings = drs.settings()
 
     DRS_message = QtGui.QLabel("This DRS requires data for the 87.5, 86.5, and 83.5 half-masses for the REE subtraction, mass 82 or 83 for the CaAr-CaCa subtraction, and mass 83 for the NaNi-CaAlO subtraction.\nIf you did not collect data for these channels, do not check the corresponding boxes. Otherwise you will get an error message.")
-    #DRS_message.setStyleSheet('color:yellow;font-size:14px')
     DRS_message.setStyleSheet('color:yellow')
     formLayout.addRow(DRS_message)
 
@@ -1004,7 +972,7 @@ def settingsWidget():
     dyErLineEdit = QtGui.QLineEdit(widget)
     dyErLineEdit.setText(settings["Dy_Er"])
     dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
-    formLayout.addRow("Dy/Er ratio (default is approximately CHUR)", dyErLineEdit)
+    formLayout.addRow("Dy/Er ratio (default is approximately chondritic)", dyErLineEdit)
 
     REEBiasLineEdit = QtGui.QLineEdit(widget)
     REEBiasLineEdit.setText(settings["REEBias"])
@@ -1111,60 +1079,6 @@ def settingsWidget():
 
     verticalSpacer9 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer9)
-
-#
-    #ageLineEdit = QtGui.QLineEdit(widget)
-    #ageLineEdit.setText(settings["Age"])
-    #ageLineEdit.textChanged.connect(lambda t: drs.setSetting("Age", float(t)))
-    #formLayout.addRow("Age", ageLineEdit)
-
-    #rbBiasLineEdit = QtGui.QLineEdit(widget)
-    #rbBiasLineEdit.setText(settings["RbBias"])
-    #rbBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("RbBias", float(t)))
-    #formLayout.addRow("Rb Bias Adjustment", rbBiasLineEdit)
-
-    #caArBiasLineEdit = QtGui.QLineEdit(widget)
-    #caArBiasLineEdit.setText(settings["CaArBias"])
-    #caArBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("CaArBias", float(t)))
-    #formLayout.addRow("CaAr Bias Adjustment", caArBiasLineEdit)
-
-    #verticalSpacer3 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    #formLayout.addItem(verticalSpacer3)
-
-    #corrComboBox = QtGui.QComboBox(widget)
-    #corrComboBox.addItems(['CaAr + REE', 'CaAr only'])
-    #corrComboBox.setCurrentText(settings['Corrections'])
-    #corrComboBox.currentTextChanged.connect(lambda t: drs.setSetting('Corrections', t))
-    #formLayout.addRow("Corrections", corrComboBox)
-
-    #verticalSpacer4 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    #formLayout.addItem(verticalSpacer4)
-
-    #luYbLineEdit = QtGui.QLineEdit(widget)
-    #luYbLineEdit.setText(settings["Lu_Yb"])
-    #luYbLineEdit.textChanged.connect(lambda t: drs.setSetting("Lu_Yb", float(t)))
-    #formLayout.addRow("Lu/Yb ratio", luYbLineEdit)
-
-    #dyErLineEdit = QtGui.QLineEdit(widget)
-    #dyErLineEdit.setText(settings["Dy_Er"])
-    #dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
-    #formLayout.addRow("Dy/Er ratio", dyErLineEdit)
-
-    #verticalSpacer5 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    #formLayout.addItem(verticalSpacer5)
-
-    #sr88_86_refLineEdit = QtGui.QLineEdit(widget)
-    #sr88_86_refLineEdit.setText(settings["Sr88_86_reference"])
-    #sr88_86_refLineEdit.textChanged.connect(lambda t: drs.setSetting("Sr88_86_reference", float(t)))
-    #formLayout.addRow("Reference Sr88/Sr86 value", sr88_86_refLineEdit)
-
-    #rb87_85_refLineEdit = QtGui.QLineEdit(widget)
-    #rb87_85_refLineEdit.setText(settings["Rb87_85_reference"])
-    #rb87_85_refLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb87_85_reference", float(t)))
-    #formLayout.addRow("Reference Rb87/Rb85 value", rb87_85_refLineEdit)
-
-    #verticalSpacer6 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    #formLayout.addItem(verticalSpacer6)
 
     # CaPO controls
     capoEqType = QtGui.QComboBox(widget)
