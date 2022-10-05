@@ -122,9 +122,8 @@ def runDRS():
 
     for counter, channel in enumerate(allInputChannels):
         drs.message("Baseline subtracting %s" % channel.name)
-        drs.progress(25 + 50*counter/len(allInputChannels))
 
-        drs.baselineSubtract(blGrp, [allInputChannels[counter]], mask, 25, 75)
+        drs.baselineSubtract(blGrp, [allInputChannels[counter]], mask, 25, 50)
         cps_ch = data.timeSeries(channel.name + '_CPS')
         input_ch = data.timeSeries(channel.name)
         cps_ch.setProperty(
@@ -239,6 +238,10 @@ def settingsWidget():
 
     settings = drs.settings()
 
+    verticalSpacer = QtGui.QSpacerItem(
+        20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer)
+
     indexComboBox = QtGui.QComboBox(widget)
     indexComboBox.addItems(timeSeriesNames)
     indexComboBox.setCurrentText(settings["IndexChannel"])
@@ -248,13 +251,18 @@ def settingsWidget():
 
     rmComboBox = QtGui.QComboBox(widget)
     rmComboBox.addItems(rmNames)
+    if settings["ReferenceMaterial"] in rmNames:
+        rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+    else:
+        rmComboBox.setCurrentText(rmNames[0])
+        drs.setSetting('ReferenceMaterial', rmNames[0])
     rmComboBox.setCurrentText(settings["ReferenceMaterial"])
     rmComboBox.currentTextChanged.connect(
         lambda t: drs.setSetting("ReferenceMaterial", t))
     formLayout.addRow("Reference material", rmComboBox)
 
     verticalSpacer = QtGui.QSpacerItem(
-        20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
+        20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer)
 
     maskCheckBox = QtGui.QCheckBox(widget)
