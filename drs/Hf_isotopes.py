@@ -50,12 +50,7 @@ def runDRS():
 	drs.progress(25)
 
 	allInputChannels = data.timeSeriesList(data.Input)
-
-	for counter, channel in enumerate(allInputChannels):
-		drs.message("Baseline subtracting %s" % channel.name)
-		drs.progress(25 + 50*counter/len(allInputChannels))
-
-		drs.baselineSubtract(data.selectionGroup("Baseline_1"), [allInputChannels[counter]], mask, 25, 75)
+	drs.baselineSubtract(data.selectionGroup("Baseline_1"), allInputChannels, mask, 25, 75)
 
 
 	HfLuYb176 = data.timeSeries("Hf176_CPS").data()

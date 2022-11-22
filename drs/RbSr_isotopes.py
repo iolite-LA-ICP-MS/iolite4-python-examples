@@ -7,6 +7,7 @@
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
+from iolite.types import Result
 import numpy as np
 
 
@@ -19,7 +20,8 @@ def Rb87_Sr87_Sr86_error_corr(sel):
     try:
         StdCorr_Sr87s_Sr86s = data.timeSeries("StdCorr_Sr87s_Sr86s")
         StdCorr_Rb87_Sr86s = data.timeSeries("StdCorr_Rb87_Sr86s")
-    except RuntimeError:
+    except RuntimeError as e:
+        print(e)
         return result
 
     array_1 = StdCorr_Sr87s_Sr86s.dataForSelection(sel)
@@ -34,7 +36,8 @@ def Rb87_Sr87_error_corr(sel):
     try:
         Sr87s_Rb87_Raw = data.timeSeries("Sr87s_Rb87_Raw")
         StdCorr_Rb87_Sr86s = data.timeSeries("StdCorr_Rb87_Sr86s")
-    except RuntimeError:
+    except RuntimeError as e:
+        print(e)
         return result
 
     array_1 = Sr87s_Rb87_Raw.dataForSelection(sel)
@@ -119,9 +122,8 @@ def runDRS():
 
     for counter, channel in enumerate(allInputChannels):
         drs.message("Baseline subtracting %s" % channel.name)
-        drs.progress(25 + 50*counter/len(allInputChannels))
 
-        drs.baselineSubtract(blGrp, [allInputChannels[counter]], mask, 25, 75)
+        drs.baselineSubtract(blGrp, [allInputChannels[counter]], mask, 25, 50)
         cps_ch = data.timeSeries(channel.name + '_CPS')
         input_ch = data.timeSeries(channel.name)
         cps_ch.setProperty(
@@ -161,6 +163,8 @@ def runDRS():
     drs.message("Correcting ratios...")
     drs.progress(80)
 
+    print("Correcting ratios here...")
+
     StdSpline_Rb87_Sr86s = data.spline(rmName, "Rb87_Sr86s_Raw").data()
     try:
         StdValue_Rb87_Sr86 = data.referenceMaterialData(rmName)["87Rb/86Sr"].value()
@@ -199,7 +203,7 @@ def runDRS():
 
     # Register error correlations:
     data.registerAssociatedResult("87Rb/86Sr - 87Rb/86Sr Rho", Rb87_Sr87_Sr86_error_corr)
-    data.registerAssociatedResult("87Rb/86Sr - 87Rb/87Sr Rho", Rb87_Sr87_error_corr)
+    data.registerAssociatedResult("87Sr/87Rb - 87Rb/86Sr Rho", Rb87_Sr87_error_corr)
 
     drs.message("Finished!")
     drs.progress(100)
@@ -234,6 +238,10 @@ def settingsWidget():
 
     settings = drs.settings()
 
+    verticalSpacer = QtGui.QSpacerItem(
+        20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer)
+
     indexComboBox = QtGui.QComboBox(widget)
     indexComboBox.addItems(timeSeriesNames)
     indexComboBox.setCurrentText(settings["IndexChannel"])
@@ -243,13 +251,18 @@ def settingsWidget():
 
     rmComboBox = QtGui.QComboBox(widget)
     rmComboBox.addItems(rmNames)
+    if settings["ReferenceMaterial"] in rmNames:
+        rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+    else:
+        rmComboBox.setCurrentText(rmNames[0])
+        drs.setSetting('ReferenceMaterial', rmNames[0])
     rmComboBox.setCurrentText(settings["ReferenceMaterial"])
     rmComboBox.currentTextChanged.connect(
         lambda t: drs.setSetting("ReferenceMaterial", t))
     formLayout.addRow("Reference material", rmComboBox)
 
     verticalSpacer = QtGui.QSpacerItem(
-        20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
+        20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer)
 
     maskCheckBox = QtGui.QCheckBox(widget)

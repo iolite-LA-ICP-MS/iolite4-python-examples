@@ -514,6 +514,43 @@ def runDRS():
         return
 
     StdCorr_Sr8786 = Sr8786_Corr * StdValue_Sr87_86 / StdSpline_Sr87_86
+    data.createTimeSeries('StdCorr_Sr8786', data.Output, indexChannel.time(), StdCorr_Sr8786)
+
+    # Calculate Std Corrected 84Sr/86Sr
+    try:
+        StdSpline_Sr84_86 = data.spline(rmName, 'Sr8486_Corr').data()
+        StdValue_Sr84_86 = data.referenceMaterialData(rmName)["84Sr/86Sr"].value()
+        StdCorr_Sr8486 = Sr8486_Corr * StdValue_Sr84_86 / StdSpline_Sr84_86
+        data.createTimeSeries('StdCorr_Sr8486', data.Output, indexChannel.time(), StdCorr_Sr8486)
+    except:
+        IoLog.informationWithOrigin("Could not calculate 84Sr/86Sr ratio. Please check that your primary RM has a 84Sr/86Sr ratio value.", "Combined Sr Isotope DRS")
+
+    if 'REE' in corrections:
+        try:
+            StdSpline_Sr84_86_b = data.spline(rmName, 'Sr8486_Corr_b').data()
+            StdValue_Sr84_86 = data.referenceMaterialData(rmName)["84Sr/86Sr"].value()
+            StdCorr_Sr8486_b = Sr8486_Corr_b * StdValue_Sr84_86 / StdSpline_Sr84_86_b
+            data.createTimeSeries('StdCorr_Sr8486_b', data.Output, indexChannel.time(), StdCorr_Sr8486_b)
+        except:
+            IoLog.informationWithOrigin("Could not calculate 84Sr/86Sr_b ratio. Please check that your primary RM has a 84Sr/86Sr ratio value.", "Combined Sr Isotope DRS")
+
+    # Calculate Std Corrected 84Sr/88Sr
+    try:
+        StdSpline_Sr84_88 = data.spline(rmName, 'Sr8488_Corr').data()
+        StdValue_Sr84_88 = data.referenceMaterialData(rmName)["84Sr/88Sr"].value()
+        StdCorr_Sr8488 = Sr8488_Corr * StdValue_Sr84_88 / StdSpline_Sr84_88
+        data.createTimeSeries('StdCorr_Sr8488', data.Output, indexChannel.time(), StdCorr_Sr8488)
+    except:
+        IoLog.informationWithOrigin("Could not calculate 84Sr/88Sr ratio. Please check that your primary RM has a 84Sr/88Sr ratio value.", "Combined Sr Isotope DRS")
+
+    if 'REE' in corrections:
+        try:
+            StdSpline_Sr84_88_b = data.spline(rmName, 'Sr8488_Corr_b').data()
+            StdValue_Sr84_88 = data.referenceMaterialData(rmName)["84Sr/88Sr"].value()
+            StdCorr_Sr8488_b = Sr8488_Corr_b * StdValue_Sr84_88 / StdSpline_Sr84_88_b
+            data.createTimeSeries('StdCorr_Sr8488_b', data.Output, indexChannel.time(), StdCorr_Sr8488_b)
+        except:
+            IoLog.informationWithOrigin("Could not calculate 84Sr/88Sr_b ratio. Please check that your primary RM has a 84Sr/88Sr ratio value.", "Combined Sr Isotope DRS")
 
     # Now generate age-corrected values (using the observed Rb/Sr ratio)
     # NOTE: The line below used Sr8786_Corr. Changed to use
@@ -549,7 +586,12 @@ def runDRS():
         drs.progress(90)
 
         groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
-        data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr87_86_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
+
+        if 'REE' in corrections:
+            data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr8786_b")], data.timeSeries("Sr8786_Corr_b"), rmName)
+        else:
+            data.propagateErrors(groups, [data.timeSeries("StdCorr_Sr8786")], data.timeSeries("Sr8786_Corr"), rmName)
+
 
     # CaPO Plot and Correction
     if len(settings['CaPO_RMs']) > 0:
@@ -621,14 +663,35 @@ def runDRS():
             print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
             fit_y = params[1]*fit_x + params[0]
 
+        '''
+           If user has chosen exp decay model, it might not find a fit.
+           If so, we'll revert to linear fit
+        '''
         if settings["CaPOEqType"] == 'Exponential Decay':
             def f(x, a, b, c):
                 return a + b * np.exp(-c * x)
 
-            params, cov = curve_fit(f, sigs_array, devs_array)
-            print(f"Here are the fit params: {params}")
+            try:
+                params, cov = curve_fit(f, sigs_array, devs_array)
+                print(f"Here are the fit params: {params}")
+                fit_y = params[0] + params[1] * np.exp(-params[2] * fit_x)
 
-            fit_y = params[0] + params[1] * np.exp(-params[2] * fit_x)
+            except RuntimeError as e:
+                if 'Optimal parameters not found: Number of calls' in str(e):
+
+                    IoLog.warning('Could not find fit to data with Exp model. Switching to Linear model.')
+
+                    settings['CaPOEqType'] = 'Linear'
+
+                    def fitFunc(x, a, b):
+                        return a + b*x
+
+                    params, cov = curve_fit(fitFunc, sigs_array, devs_array, ftol=1e-5)
+
+                    print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
+                    fit_y = params[1]*fit_x + params[0]
+                else:
+                    raise
 
         g = PLOT.addGraph()
         g.setName("fit")
