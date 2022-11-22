@@ -93,7 +93,7 @@ class ReferenceMaterialsMenu(QtGui.QMenu):
         self.rmsChanged.emit(self.rmsForCaPOCorrection)
 
 '''
-Defining the colors to use in the CaPO plot here. By default only has 5 colors:
+Defining the colors to use in the CaPO plot here. By default only has 10 colors:
 '''
 PLOT_COLORS = [
     QColor(239, 71, 111),   # Carmine Red
@@ -354,6 +354,18 @@ def runDRS():
         Yb86 = Yb86_5 * 21.68 / 16.103 / np.power((85.968195 / 86.46911), BetaSr)
         Sr86_c = SrCaArYb86 - CaAr86 - Yb86
 
+        # Create a few interference to Sr channels (Ho, Er and Yb)
+        try:
+            total82_5 = data.timeSeriesByMass(data.Intermediate, 82.5, 0.1).data()
+            Ho_Sr_ppm = (total82_5) / (SrCaArYbLu88 / 0.8258) * 1e6
+            data.createTimeSeries('Ho_Sr_ppm', data.Output, indexChannel.time(), Ho_Sr_ppm)
+        except IndexError:
+            pass
+        Er_Sr_ppm = (Er83_5 / 0.2293) / (SrCaArYbLu88 / 0.8258) * 1e6
+        data.createTimeSeries('Er_Sr_ppm', data.Output, indexChannel.time(), Er_Sr_ppm)
+        Yb_Sr_ppm = (Yb86_5 / 0.1613) / (SrCaArYbLu88 / 0.8258) * 1e6
+        data.createTimeSeries('Yb_Sr_ppm', data.Output, indexChannel.time(), Yb_Sr_ppm)
+
     # Gather up intermediate channels and add them as time series:
     int_channel_names = ['PFract', 'PSr86', 'PSr88', 'BetaSr', 'BetaRb', 'BetaCaAr',
                         'Sr84_c', 'Sr86_c', 'Sr87_c', 'Sr88_c', 'CaAr84', 'CaAr86', 'CaAr88', 'Rb87']
@@ -583,7 +595,7 @@ def runDRS():
             g = PLOT.addGraph()
             g.setName(rm)
             g.setLineStyle('lsNone')
-            g.setScatterStyle('ssDisc', 6.0, PLOT_COLORS[i])
+            g.setScatterStyle('ssDisc', 6.0, PLOT_COLORS[i % 2])
             g.setData(np.array(sigs), np.array(devs))
 
 
@@ -734,7 +746,7 @@ def settingsWidget():
 
     data.selectionGroupsChanged.connect(updateRMCombo)
 
-    verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    verticalSpacer = QtGui.QSpacerItem(20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer)
 
     maskCheckBox = QtGui.QCheckBox(widget)
@@ -758,7 +770,7 @@ def settingsWidget():
     maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
     formLayout.addRow("Mask trim", maskTrimLineEdit)
 
-    verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    verticalSpacer2 = QtGui.QSpacerItem(20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer2)
 
     ageLineEdit = QtGui.QLineEdit(widget)
@@ -776,7 +788,7 @@ def settingsWidget():
     caArBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("CaArBias", float(t)))
     formLayout.addRow("CaAr Bias Adjustment", caArBiasLineEdit)
 
-    verticalSpacer3 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    verticalSpacer3 = QtGui.QSpacerItem(20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer3)
 
     corrComboBox = QtGui.QComboBox(widget)
@@ -785,7 +797,7 @@ def settingsWidget():
     corrComboBox.currentTextChanged.connect(lambda t: drs.setSetting('Corrections', t))
     formLayout.addRow("Corrections", corrComboBox)
 
-    verticalSpacer4 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    verticalSpacer4 = QtGui.QSpacerItem(20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer4)
 
     luYbLineEdit = QtGui.QLineEdit(widget)
@@ -798,7 +810,7 @@ def settingsWidget():
     dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
     formLayout.addRow("Dy/Er ratio", dyErLineEdit)
 
-    verticalSpacer5 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    verticalSpacer5 = QtGui.QSpacerItem(20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer5)
 
     sr88_86_refLineEdit = QtGui.QLineEdit(widget)
@@ -811,7 +823,7 @@ def settingsWidget():
     rb87_85_refLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb87_85_reference", float(t)))
     formLayout.addRow("Reference Rb87/Rb85 value", rb87_85_refLineEdit)
 
-    verticalSpacer6 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    verticalSpacer6 = QtGui.QSpacerItem(20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer6)
 
     # CaPO controls
