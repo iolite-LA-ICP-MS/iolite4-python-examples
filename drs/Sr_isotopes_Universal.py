@@ -2,8 +2,8 @@
 #/ Name: Sr Isotopes Universal
 #/ Authors: Bence Paul, Joe Petrus, Graham Hagen-Peter, author(s) of Sr_isotopes_Total_NIGL.ipf, and various authors of previous Iolite Sr isotope DRS
 #/ Description: A Sr isotopes DRS that can correct for different combinations of interferences
-#/ References: Mulder et al. (hopefully)
-#/ Version: 1.0
+#/ References: Mulder et al. (2023) Geostandards and Geolanalytical Research
+#/ Version: 2.0
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
@@ -94,7 +94,7 @@ class ReferenceMaterialsMenu(QtGui.QMenu):
         self.rmsChanged.emit(self.rmsForCaPOCorrection)
 
 '''
-Defining the colors to use in the CaPO plot here. By default only has 5 colors:
+Defining the colors to use in the CaPO plot here. By default only has 10 colors:
 '''
 PLOT_COLORS = [
     QColor(239, 71, 111),   # Carmine Red
@@ -165,6 +165,7 @@ def runDRS():
     REE_subtract = settings["REE_subtract"]
     REEBias = settings["REEBias"]
     Dy_Er = settings["Dy_Er"]
+    Lu_Yb = settings["Lu_Yb"]
     CaAr_CaCa_subtract = settings["CaAr_CaCa_subtract"]
     CaAr_83 = settings["CaAr_83"]
     CaArBias = settings["CaArBias"]
@@ -253,7 +254,6 @@ def runDRS():
         drs.finished()
         return
 
-
     try:
         Y89 = data.timeSeriesList(data.Intermediate, {'Mass': '89'})[0].data()
     except:
@@ -285,33 +285,36 @@ def runDRS():
         pass
 
     try:
-        total82_5 = data.timeSeriesList(data.Intermediate, {'Mass': '84.5'})[0].data()
+        total82_5 = data.timeSeriesList(data.Intermediate, {'Mass': '82.5'})[0].data()
     except:
         pass
 
     try:
         total82 = data.timeSeriesList(data.Intermediate, {'Mass': '82'})[0].data()
     except:  
+        pass
+
+    try:
+        total81_5 = data.timeSeriesList(data.Intermediate, {'Mass': '81.5'})[0].data()
+    except:
         pass  
 
-
-
     if ProportionCaAr < 0 or ProportionCaAr >1:
-    	IoLog.error("The proportion CaAr must be between 0 and 1.")
-    	drs.message("DRS did not finish. Please check Messages")
-    	drs.progress(100)
-    	drs.finished()
-    	return
+        IoLog.error("The proportion CaAr must be between 0 and 1.")
+        drs.message("DRS did not finish. Please check Messages")
+        drs.progress(100)
+        drs.finished()
+        return
 
     if ProportionNaNi < 0 or ProportionNaNi >1:
-    	IoLog.error("The proportion NaNi must be between 0 and 1.")
-    	drs.message("DRS did not finish. Please check Messages")
-    	drs.progress(100)
-    	drs.finished()
-    	return
+        IoLog.error("The proportion NaNi must be between 0 and 1.")
+        drs.message("DRS did not finish. Please check Messages")
+        drs.progress(100)
+        drs.finished()
+        return
 
 
-##UNIVERSAL DRS interference subtraction combinations here
+    # UNIVERSAL DRS interference subtraction combinations here
 
     #True masses from NIST; Monoatomic isotopice abundances from IUPAC subcommittee for Isotopic Abundance Measurements (1999) compiled by U. of Alberta; Polyatomic isotopologue abundances calculated from Scientific Instrument Services "Isotope Distribution Calculator" (sisweb.com/mstools/isotope.htm)
     Sr84mass = 83.9134191
@@ -331,229 +334,215 @@ def runDRS():
     drs.message("Subtracting interferences...")
     drs.progress(40)
 
-##REE plus/minus Ca-Ar-CaCa and/or NaNi-CaAlO subtractions
+    ##REE plus/minus Ca-Ar-CaCa and/or NaNi-CaAlO subtractions
 
     if REE_subtract:
+        residual_86_REE = total86 - ((total86_5 * 21.83 /16.103) / np.power((85.968195 / 86.46911), PFract*REEBias))
 
-    	residual_86_REE = total86 - ((total86_5 * 21.83 /16.103) / np.power((85.968195 / 86.46911), PFract*REEBias))
-    	residual_88_REE = total88 - ((total86_5 * 12.76 /16.103) / np.power((87.971284 / 86.46911), PFract*REEBias))-((total87_5 * 2.59 /97.41) / np.power((87.97134 / 87.47039), PFract*REEBias))
-		
-    	PFract_REE = (np.log(Sr88_86_reference/(residual_88_REE/residual_86_REE)))/(np.log(Sr88mass/Sr86mass))		
-		
-    	try:
-    		residual_82_REE = total82 - (total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias) - ((total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias)*(1/0.0161) * Dy_Er * 0.2818)
-    	except:
-    		pass
+        try:
+            residual_88_REE = total88 - ((total86_5 * 12.76 /16.103) / np.power((87.971284 / 86.46911), PFract*REEBias))-((total87_5 * 2.59 /97.41) / np.power((87.97134 / 87.47039), PFract*REEBias))
+        except:
+            IoLog.error("There is no 87.5 channel, so 176Lu++ will be calculated using the monitored 173Yb++ on 86.5 and a user-defined Lu/Yb. Click OK to proceed.")
+            residual_88_REE = total88 - ((total86_5 * 12.76 /16.103) / np.power((87.971284 / 86.46911), PFract*REEBias))- ((total86_5 * 12.76 /16.103) / np.power((87.971284 / 86.46911), PFract*REEBias)*(1/0.1276) * Lu_Yb * 0.0259)
 
-    	try:
-    		residual_83_REE = total83 -  (total83_5 * 33.61 /22.93) / np.power((82.96514975 / 83.46619), PFract_REE*REEBias)
-    	except:
-    		pass
+        PFract_REE = (np.log(Sr88_86_reference/(residual_88_REE/residual_86_REE)))/(np.log(Sr88mass/Sr86mass))
 
+        try:
+            residual_82_REE = total82 - (total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias) - ((total81_5 * 28.18 /24.90) / np.power((81.96459 / 81.46436), PFract_REE*REEBias))
+        except:
+            try:
+                IoLog.error("There is no 81.5 channel, so 164Dy++ will be calculated using the monitored 167Er++ on 83.5 and a user-defined Dy/Er. Click OK to proceed.")
+                residual_82_REE = total82 - (total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias) - ((total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias)*(1/0.0161) * Dy_Er * 0.2818)
+            except:
+                pass
+            pass
 
-    	residual_84_REE = total84 - ((total83_5 * 26.78 /22.93)/ np.power((83.96619 / 83.46619), PFract_REE*REEBias)-(total86_5 * 0.13 /16.13) / np.power((83.96694 / 86.46911), PFract_REE*REEBias))
-    	residual_85_REE = total85 - (total86_5 * 3.04 / 16.13) / np.power((84.967385 / 86.46911), PFract_REE*REEBias) - (total83_5 * 14.93 /22.93) / np.power((84.96774 / 83.46619), PFract_REE*REEBias)
-    	residual_87_REE = total87 - ((total86_5 * 31.83 /16.13) / np.power((86.96943 / 86.46911), PFract_REE*REEBias))
-
-    	Ho_Sr_ppm = (total82_5)/(total88/0.8258) * 1e6
-    	Er_Sr_ppm = (total83_5/0.2293)/(total88/0.8258) * 1e6
-    	Yb_Sr_ppm = (total86_5/0.1613)/(total88/0.8258) * 1e6
-
-    	output_channels_names = ['Ho_Sr_ppm','Er_Sr_ppm','Yb_Sr_ppm']
-    	output_channels = [Ho_Sr_ppm,Er_Sr_ppm,Yb_Sr_ppm]
-    	for name, channel in zip(output_channels_names, output_channels):
-    		data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
-
-	
-
-	
-    	if CaAr_CaCa_subtract:
-
-    		if CaAr_83:
-  		    		
-    			residual_86_CaAr = residual_86_REE - (((ProportionCaAr)*residual_83_REE * 0.0039 /0.139) / np.power((85.91607 / 82.92115), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 0.035 /0.272) / np.power((85.91411 / 82.92136), PFract_REE*CaArBias))
-    			residual_88_CaAr = residual_88_REE - (((ProportionCaAr)*residual_83_REE * 0.189 /0.139) / np.power((87.91491 / 82.92115), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 0.412 /0.272) / np.power((87.91512 / 82.92136), PFract_REE*CaArBias))
-		
-    			PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))	
-
-    			try:	
-    				residual_82_CaAr = residual_82_REE -  (((ProportionCaAr)*residual_83_REE * 0.649 /0.139) / np.power((81.921 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 1.260 /0.272) / np.power((81.92121 / 82.92136), PFract_CaAr*CaArBias))
-    			except:
-    				pass
-
-    			residual_84_CaAr = residual_84_REE - (((ProportionCaAr)*residual_83_REE * 2.078 /0.139) / np.power((83.92008 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 4.048 /0.272) / np.power((83.91808 / 82.92136), PFract_CaAr*CaArBias))
-    			residual_85_CaAr = residual_85_REE - (((1-ProportionCaAr)*residual_83_REE * 0.0019 /0.272) / np.power((84.91739 / 82.92136), PFract_CaAr*CaArBias))
-    			residual_87_CaAr = residual_87_REE - (((1-ProportionCaAr)*residual_83_REE * 0.0056 /0.272) / np.power((86.91426 / 82.92136), PFract_CaAr*CaArBias))
-
-    		else:
-
-    			residual_86_CaAr = residual_86_REE - (((ProportionCaAr)*residual_82_REE * 0.0039 /0.649) / np.power((85.91607 / 81.921), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 0.035 /1.260) / np.power((85.91411 / 81.92121), PFract_REE*CaArBias))
-    			residual_88_CaAr = residual_88_REE - (((ProportionCaAr)*residual_82_REE * 0.189 /0.649) / np.power((87.91491 / 81.921), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 0.412 /1.260) / np.power((87.91512 / 81.92121), PFract_REE*CaArBias))
-		
-    			PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))	
-
-    			try:	
-    				residual_83_CaAr = residual_83_REE -  (((ProportionCaAr)*residual_82_REE * 0.139 /0.649) / np.power((82.92115 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 0.272 /1.260) / np.power((82.92136 / 81.92121), PFract_CaAr*CaArBias))
-    			except:
-    				pass
-
-    			residual_84_CaAr = residual_84_REE - (((ProportionCaAr)*residual_82_REE * 2.078 /0.649) / np.power((83.92008 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 4.048 /1.260) / np.power((83.91808 / 81.92121), PFract_CaAr*CaArBias))
-    			residual_85_CaAr = residual_85_REE - (((1-ProportionCaAr)*residual_82_REE * 0.0019 /1.260) / np.power((84.91739 / 81.92121), PFract_CaAr*CaArBias))
-    			residual_87_CaAr = residual_87_REE - (((1-ProportionCaAr)*residual_82_REE * 0.0056 /1.260) / np.power((86.91426 / 81.92121), PFract_CaAr*CaArBias))
-
-    	else:		
-    		PFract_CaAr = PFract_REE
-			
-    		residual_86_CaAr = residual_86_REE 
-    		residual_88_CaAr = residual_88_REE
-
-    		try:			
-    			residual_83_CaAr = residual_83_REE
-    		except:
-    			pass
-
-    		residual_84_CaAr = residual_84_REE
-    		residual_85_CaAr = residual_85_REE
-    		residual_87_CaAr = residual_87_REE
-    	
-		
-    	if NaNi_CaAlO_subtract:
-    		if CaAr_83:
-    			IoLog.error("Using mass 83 for CaAr-CaCa peak stripping assumes that there is no NaNi-CaAlO on mass 83. Use mass 82 for CaAr-CaCa peak stripping if you want to do these corrections independently.")
-    			drs.message("DRS did not finish. Please check Messages")
-    			drs.progress(100)
-    			drs.finished()
-    			return
-
-    		residual_86_NaNi = residual_86_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.139 /96.701) / np.power((85.93523 / 82.93905), PFract_CaAr*NaNiBias))
-    		residual_88_NaNi = residual_88_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.001 /96.701) / np.power((87.93616 / 82.93905), PFract_CaAr*NaNiBias))
-    		PFract_NaNi = (np.log(Sr88_86_reference/(residual_88_NaNi/residual_86_NaNi)))/(np.log(Sr88mass/Sr86mass))
-
-    		residual_84_NaNi = residual_84_CaAr - (((ProportionNaNi)*residual_83_CaAr * 1.130 /26.100) / np.power((83.92083 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.039 /96.701) / np.power((83.94326 / 82.93905), PFract_NaNi*NaNiBias))
-    		residual_85_NaNi = residual_85_CaAr - (((ProportionNaNi)*residual_83_CaAr * 3.590 /26.100) / np.power((84.91812 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.841 /96.701) / np.power((84.93508 / 82.93905), PFract_NaNi*NaNiBias))
-    		residual_87_NaNi = residual_87_CaAr - (((ProportionNaNi)*residual_83_CaAr * 0.910 /26.100) / np.power((86.91774 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 2.082 /96.701) / np.power((86.93195 / 82.93905), PFract_NaNi*NaNiBias))
-    	else:
-    		residual_84_NaNi = residual_84_CaAr
-    		residual_85_NaNi = residual_85_CaAr
-    		residual_86_NaNi = residual_86_CaAr
-    		residual_87_NaNi = residual_87_CaAr
-    		residual_88_NaNi = residual_88_CaAr
-    	
-
-##CaAr-CaCa plus/minus Na-Ni-CaAlO subtractions
-
-    else:		
-    			
-    	if CaAr_CaCa_subtract:
-
-    		if CaAr_83:
-  		    		
-    			residual_86_CaAr = total86 - (((ProportionCaAr)*total83 * 0.0039 /0.139) / np.power((85.91607 / 82.92115), PFract*CaArBias)) - (((1-ProportionCaAr)*total83 * 0.035 /0.272) / np.power((85.91411 / 82.92136), PFract*CaArBias))
-    			residual_88_CaAr = total88 - (((ProportionCaAr)*total83 * 0.189 /0.139) / np.power((87.91491 / 82.92115), PFract*CaArBias)) - (((1-ProportionCaAr)*total83 * 0.412 /0.272) / np.power((87.91512 / 82.92136), PFract*CaArBias))
-		
-    			PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))	
-
-    			try:	
-    				residual_82_CaAr = total82 -  (((ProportionCaAr)*total83 * 0.649 /0.139) / np.power((81.921 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total83 * 1.260 /0.272) / np.power((81.92121 / 82.92136), PFract_CaAr*CaArBias))
-    			except:
-    				pass
-
-    			residual_84_CaAr = total84 - (((ProportionCaAr)*total83 * 2.078 /0.139) / np.power((83.92008 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total83 * 4.048 /0.272) / np.power((83.91808 / 82.92136), PFract_CaAr*CaArBias))
-    			residual_85_CaAr = total85 - (((1-ProportionCaAr)*total83 * 0.0019 /0.272) / np.power((84.91739 / 82.92136), PFract_CaAr*CaArBias))
-    			residual_87_CaAr = total87 - (((1-ProportionCaAr)*total83 * 0.0056 /0.272) / np.power((86.91426 / 82.92136), PFract_CaAr*CaArBias))
-
-    		else:
-
-    			residual_86_CaAr = total86 - (((ProportionCaAr)*total82 * 0.0039 /0.649) / np.power((85.91607 / 81.921), PFract*CaArBias)) - (((1-ProportionCaAr)*total82 * 0.035 /1.260) / np.power((85.91411 / 81.92121), PFract*CaArBias))
-    			residual_88_CaAr = total88 - (((ProportionCaAr)*total82 * 0.189 /0.649) / np.power((87.91491 / 81.921), PFract*CaArBias)) - (((1-ProportionCaAr)*total82 * 0.412 /1.260) / np.power((87.91512 / 81.92121), PFract*CaArBias))
-		
-    			PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))	
-
-    			try:	
-    				residual_83_CaAr = total83 -  (((ProportionCaAr)*total82 * 0.139 /0.649) / np.power((82.92115 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total82 * 0.272 /1.260) / np.power((82.92136 / 81.92121), PFract_CaAr*CaArBias))
-    			except:
-    				pass
-
-    			residual_84_CaAr = total84 - (((ProportionCaAr)*total82 * 2.078 /0.649) / np.power((83.92008 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total82 * 4.048 /1.260) / np.power((83.91808 / 81.92121), PFract_CaAr*CaArBias))
-    			residual_85_CaAr = total85 - (((1-ProportionCaAr)*total82 * 0.0019 /1.260) / np.power((84.91739 / 81.92121), PFract_CaAr*CaArBias))
-    			residual_87_CaAr = total87 - (((1-ProportionCaAr)*total82 * 0.0056 /1.260) / np.power((86.91426 / 81.92121), PFract_CaAr*CaArBias))
-
-    	else:		
-    		PFract_CaAr = PFract
-		
-    		residual_86_CaAr = total86 
-    		residual_88_CaAr = total88
-
-    		try:
-    			residual_83_CaAr = total83
-    		except:
-    			pass
-
-    		residual_84_CaAr = total84
-    		residual_85_CaAr = total85
-    		residual_87_CaAr = total87
-    	
-			
-    	if NaNi_CaAlO_subtract:
-
-    		if CaAr_83:
-    			IoLog.error("Using mass 83 for CaAr-CaCa peak stripping assumes that there is no NaNi-CaAlO on mass 83. Use mass 82 for CaAr-CaCa peak stripping if you want to do these corrections independently.")
-    			drs.message("DRS did not finish. Please check Messages")
-    			drs.progress(100)
-    			drs.finished()
-    			return
+        try:
+            residual_83_REE = total83 -  (total83_5 * 33.61 /22.93) / np.power((82.96514975 / 83.46619), PFract_REE*REEBias)
+        except:
+            pass
 
 
-    		residual_86_NaNi = residual_86_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.139 /96.701) / np.power((85.93523 / 82.93905), PFract_CaAr*NaNiBias))
-    		residual_88_NaNi = residual_88_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.001 /96.701) / np.power((87.93616 / 82.93905), PFract_CaAr*NaNiBias))
-    		PFract_NaNi = (np.log(Sr88_86_reference/(residual_88_NaNi/residual_86_NaNi)))/(np.log(Sr88mass/Sr86mass))
+        residual_84_REE = total84 - ((total83_5 * 26.78 /22.93)/ np.power((83.96619 / 83.46619), PFract_REE*REEBias)-(total86_5 * 0.13 /16.13) / np.power((83.96694 / 86.46911), PFract_REE*REEBias))
+        residual_85_REE = total85 - (total86_5 * 3.04 / 16.13) / np.power((84.967385 / 86.46911), PFract_REE*REEBias) - (total83_5 * 14.93 /22.93) / np.power((84.96774 / 83.46619), PFract_REE*REEBias)
+        residual_87_REE = total87 - ((total86_5 * 31.83 /16.13) / np.power((86.96943 / 86.46911), PFract_REE*REEBias))
 
-    		residual_84_NaNi = residual_84_CaAr - (((ProportionNaNi)*residual_83_CaAr * 1.130 /26.100) / np.power((83.92083 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.039 /96.701) / np.power((83.94326 / 82.93905), PFract_NaNi*NaNiBias))
-    		residual_85_NaNi = residual_85_CaAr - (((ProportionNaNi)*residual_83_CaAr * 3.590 /26.100) / np.power((84.91812 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.841 /96.701) / np.power((84.93508 / 82.93905), PFract_NaNi*NaNiBias))
-    		residual_87_NaNi = residual_87_CaAr - (((ProportionNaNi)*residual_83_CaAr * 0.910 /26.100) / np.power((86.91774 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 2.082 /96.701) / np.power((86.93195 / 82.93905), PFract_NaNi*NaNiBias))
-    	else:
-    		residual_84_NaNi = residual_84_CaAr
-    		residual_85_NaNi = residual_85_CaAr
-    		residual_86_NaNi = residual_86_CaAr
-    		residual_87_NaNi = residual_87_CaAr
-    		residual_88_NaNi = residual_88_CaAr
+        Er_Sr_ppm = (total83_5/0.2293)/(total88/0.8258) * 1e6
+        Yb_Sr_ppm = (total86_5/0.1613)/(total88/0.8258) * 1e6
 
-	
+
+        if CaAr_CaCa_subtract:
+            if CaAr_83:
+                residual_86_CaAr = residual_86_REE - (((ProportionCaAr)*residual_83_REE * 0.0039 /0.139) / np.power((85.91607 / 82.92115), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 0.035 /0.272) / np.power((85.91411 / 82.92136), PFract_REE*CaArBias))
+                residual_88_CaAr = residual_88_REE - (((ProportionCaAr)*residual_83_REE * 0.189 /0.139) / np.power((87.91491 / 82.92115), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 0.412 /0.272) / np.power((87.91512 / 82.92136), PFract_REE*CaArBias))
+
+                PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))
+
+                try:
+                    residual_82_CaAr = residual_82_REE -  (((ProportionCaAr)*residual_83_REE * 0.649 /0.139) / np.power((81.921 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 1.260 /0.272) / np.power((81.92121 / 82.92136), PFract_CaAr*CaArBias))
+                except:
+                    pass
+
+                residual_84_CaAr = residual_84_REE - (((ProportionCaAr)*residual_83_REE * 2.078 /0.139) / np.power((83.92008 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_83_REE * 4.048 /0.272) / np.power((83.91808 / 82.92136), PFract_CaAr*CaArBias))
+                residual_85_CaAr = residual_85_REE - (((1-ProportionCaAr)*residual_83_REE * 0.0019 /0.272) / np.power((84.91739 / 82.92136), PFract_CaAr*CaArBias))
+                residual_87_CaAr = residual_87_REE - (((1-ProportionCaAr)*residual_83_REE * 0.0056 /0.272) / np.power((86.91426 / 82.92136), PFract_CaAr*CaArBias))
+
+            else:
+                residual_86_CaAr = residual_86_REE - (((ProportionCaAr)*residual_82_REE * 0.0039 /0.649) / np.power((85.91607 / 81.921), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 0.035 /1.260) / np.power((85.91411 / 81.92121), PFract_REE*CaArBias))
+                residual_88_CaAr = residual_88_REE - (((ProportionCaAr)*residual_82_REE * 0.189 /0.649) / np.power((87.91491 / 81.921), PFract_REE*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 0.412 /1.260) / np.power((87.91512 / 81.92121), PFract_REE*CaArBias))
+
+                PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))
+
+                try:
+                    residual_83_CaAr = residual_83_REE -  (((ProportionCaAr)*residual_82_REE * 0.139 /0.649) / np.power((82.92115 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 0.272 /1.260) / np.power((82.92136 / 81.92121), PFract_CaAr*CaArBias))
+                except:
+                    pass
+
+                residual_84_CaAr = residual_84_REE - (((ProportionCaAr)*residual_82_REE * 2.078 /0.649) / np.power((83.92008 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*residual_82_REE * 4.048 /1.260) / np.power((83.91808 / 81.92121), PFract_CaAr*CaArBias))
+                residual_85_CaAr = residual_85_REE - (((1-ProportionCaAr)*residual_82_REE * 0.0019 /1.260) / np.power((84.91739 / 81.92121), PFract_CaAr*CaArBias))
+                residual_87_CaAr = residual_87_REE - (((1-ProportionCaAr)*residual_82_REE * 0.0056 /1.260) / np.power((86.91426 / 81.92121), PFract_CaAr*CaArBias))
+
+        else:
+            PFract_CaAr = PFract_REE
+
+            residual_86_CaAr = residual_86_REE
+            residual_88_CaAr = residual_88_REE
+
+            try:
+                residual_83_CaAr = residual_83_REE
+            except:
+                pass
+
+            residual_84_CaAr = residual_84_REE
+            residual_85_CaAr = residual_85_REE
+            residual_87_CaAr = residual_87_REE
+
+        if NaNi_CaAlO_subtract:
+            if CaAr_83:
+                IoLog.error("Using mass 83 for CaAr-CaCa peak stripping assumes that there is no NaNi-CaAlO on mass 83. Use mass 82 for CaAr-CaCa peak stripping if you want to do these corrections independently.")
+                drs.message("DRS did not finish. Please check Messages")
+                drs.progress(100)
+                drs.finished()
+                return
+
+            residual_86_NaNi = residual_86_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.139 /96.701) / np.power((85.93523 / 82.93905), PFract_CaAr*NaNiBias))
+            residual_88_NaNi = residual_88_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.001 /96.701) / np.power((87.93616 / 82.93905), PFract_CaAr*NaNiBias))
+            PFract_NaNi = (np.log(Sr88_86_reference/(residual_88_NaNi/residual_86_NaNi)))/(np.log(Sr88mass/Sr86mass))
+
+            residual_84_NaNi = residual_84_CaAr - (((ProportionNaNi)*residual_83_CaAr * 1.130 /26.100) / np.power((83.92083 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.039 /96.701) / np.power((83.94326 / 82.93905), PFract_NaNi*NaNiBias))
+            residual_85_NaNi = residual_85_CaAr - (((ProportionNaNi)*residual_83_CaAr * 3.590 /26.100) / np.power((84.91812 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.841 /96.701) / np.power((84.93508 / 82.93905), PFract_NaNi*NaNiBias))
+            residual_87_NaNi = residual_87_CaAr - (((ProportionNaNi)*residual_83_CaAr * 0.910 /26.100) / np.power((86.91774 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 2.082 /96.701) / np.power((86.93195 / 82.93905), PFract_NaNi*NaNiBias))
+        else:
+            residual_84_NaNi = residual_84_CaAr
+            residual_85_NaNi = residual_85_CaAr
+            residual_86_NaNi = residual_86_CaAr
+            residual_87_NaNi = residual_87_CaAr
+            residual_88_NaNi = residual_88_CaAr
+
+    ##CaAr-CaCa plus/minus Na-Ni-CaAlO subtractions
+    else:
+
+        if CaAr_CaCa_subtract:
+
+            if CaAr_83:
+
+                residual_86_CaAr = total86 - (((ProportionCaAr)*total83 * 0.0039 /0.139) / np.power((85.91607 / 82.92115), PFract*CaArBias)) - (((1-ProportionCaAr)*total83 * 0.035 /0.272) / np.power((85.91411 / 82.92136), PFract*CaArBias))
+                residual_88_CaAr = total88 - (((ProportionCaAr)*total83 * 0.189 /0.139) / np.power((87.91491 / 82.92115), PFract*CaArBias)) - (((1-ProportionCaAr)*total83 * 0.412 /0.272) / np.power((87.91512 / 82.92136), PFract*CaArBias))
+
+                PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))
+
+                try:
+                    residual_82_CaAr = total82 -  (((ProportionCaAr)*total83 * 0.649 /0.139) / np.power((81.921 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total83 * 1.260 /0.272) / np.power((81.92121 / 82.92136), PFract_CaAr*CaArBias))
+                except:
+                    pass
+
+                residual_84_CaAr = total84 - (((ProportionCaAr)*total83 * 2.078 /0.139) / np.power((83.92008 / 82.92115), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total83 * 4.048 /0.272) / np.power((83.91808 / 82.92136), PFract_CaAr*CaArBias))
+                residual_85_CaAr = total85 - (((1-ProportionCaAr)*total83 * 0.0019 /0.272) / np.power((84.91739 / 82.92136), PFract_CaAr*CaArBias))
+                residual_87_CaAr = total87 - (((1-ProportionCaAr)*total83 * 0.0056 /0.272) / np.power((86.91426 / 82.92136), PFract_CaAr*CaArBias))
+
+            else:
+
+                residual_86_CaAr = total86 - (((ProportionCaAr)*total82 * 0.0039 /0.649) / np.power((85.91607 / 81.921), PFract*CaArBias)) - (((1-ProportionCaAr)*total82 * 0.035 /1.260) / np.power((85.91411 / 81.92121), PFract*CaArBias))
+                residual_88_CaAr = total88 - (((ProportionCaAr)*total82 * 0.189 /0.649) / np.power((87.91491 / 81.921), PFract*CaArBias)) - (((1-ProportionCaAr)*total82 * 0.412 /1.260) / np.power((87.91512 / 81.92121), PFract*CaArBias))
+
+                PFract_CaAr = (np.log(Sr88_86_reference/(residual_88_CaAr/residual_86_CaAr)))/(np.log(Sr88mass/Sr86mass))
+
+                try:
+                    residual_83_CaAr = total83 -  (((ProportionCaAr)*total82 * 0.139 /0.649) / np.power((82.92115 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total82 * 0.272 /1.260) / np.power((82.92136 / 81.92121), PFract_CaAr*CaArBias))
+                except:
+                    pass
+
+                residual_84_CaAr = total84 - (((ProportionCaAr)*total82 * 2.078 /0.649) / np.power((83.92008 / 81.921), PFract_CaAr*CaArBias)) - (((1-ProportionCaAr)*total82 * 4.048 /1.260) / np.power((83.91808 / 81.92121), PFract_CaAr*CaArBias))
+                residual_85_CaAr = total85 - (((1-ProportionCaAr)*total82 * 0.0019 /1.260) / np.power((84.91739 / 81.92121), PFract_CaAr*CaArBias))
+                residual_87_CaAr = total87 - (((1-ProportionCaAr)*total82 * 0.0056 /1.260) / np.power((86.91426 / 81.92121), PFract_CaAr*CaArBias))
+
+        else:
+            PFract_CaAr = PFract
+
+            residual_86_CaAr = total86
+            residual_88_CaAr = total88
+
+            try:
+                residual_83_CaAr = total83
+            except:
+                pass
+
+            residual_84_CaAr = total84
+            residual_85_CaAr = total85
+            residual_87_CaAr = total87
+
+        if NaNi_CaAlO_subtract:
+
+            if CaAr_83:
+                IoLog.error("Using mass 83 for CaAr-CaCa peak stripping assumes that there is no NaNi-CaAlO on mass 83. Use mass 82 for CaAr-CaCa peak stripping if you want to do these corrections independently.")
+                drs.message("DRS did not finish. Please check Messages")
+                drs.progress(100)
+                drs.finished()
+                return
+
+            residual_86_NaNi = residual_86_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.139 /96.701) / np.power((85.93523 / 82.93905), PFract_CaAr*NaNiBias))
+            residual_88_NaNi = residual_88_CaAr - (((1-ProportionNaNi)*residual_83_CaAr * 0.001 /96.701) / np.power((87.93616 / 82.93905), PFract_CaAr*NaNiBias))
+            PFract_NaNi = (np.log(Sr88_86_reference/(residual_88_NaNi/residual_86_NaNi)))/(np.log(Sr88mass/Sr86mass))
+
+            residual_84_NaNi = residual_84_CaAr - (((ProportionNaNi)*residual_83_CaAr * 1.130 /26.100) / np.power((83.92083 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.039 /96.701) / np.power((83.94326 / 82.93905), PFract_NaNi*NaNiBias))
+            residual_85_NaNi = residual_85_CaAr - (((ProportionNaNi)*residual_83_CaAr * 3.590 /26.100) / np.power((84.91812 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 0.841 /96.701) / np.power((84.93508 / 82.93905), PFract_NaNi*NaNiBias))
+            residual_87_NaNi = residual_87_CaAr - (((ProportionNaNi)*residual_83_CaAr * 0.910 /26.100) / np.power((86.91774 / 82.92056), PFract_NaNi*NaNiBias)) - (((1-ProportionNaNi)*residual_83_CaAr * 2.082 /96.701) / np.power((86.93195 / 82.93905), PFract_NaNi*NaNiBias))
+        else:
+            residual_84_NaNi = residual_84_CaAr
+            residual_85_NaNi = residual_85_CaAr
+            residual_86_NaNi = residual_86_CaAr
+            residual_87_NaNi = residual_87_CaAr
+            residual_88_NaNi = residual_88_CaAr
+
     #final=risidualNaNi
-    Sr84 = residual_84_NaNi
-    Rb85 = residual_85_NaNi
-    Sr86 = residual_86_NaNi
-    SrRb87 = residual_87_NaNi
-    Sr88 = residual_88_NaNi
+    Sr84_corr = residual_84_NaNi
+    Rb85_corr = residual_85_NaNi
+    Sr86_corr = residual_86_NaNi
+    SrRb87_corr = residual_87_NaNi
+    Sr88_corr = residual_88_NaNi
 
+    BetaSr = (np.log(Sr88_86_reference/(Sr88_corr/Sr86_corr)))/(np.log(Sr88mass/Sr86mass))
+    Rb87_corr = (Rb85_corr * Rb87_85_reference) / np.power((Rb87mass / Rb85mass), BetaSr)
+    Sr87_corr = (SrRb87_corr - Rb87_corr)
 
-    BetaSr = (np.log(Sr88_86_reference/(Sr88/Sr86)))/(np.log(Sr88mass/Sr86mass))
-    Rb87 = (Rb85 * Rb87_85_reference) / np.power((Rb87mass / Rb85mass), BetaSr)
-    Sr87 = (SrRb87 - Rb87)
+    Sr84_86_Corr = (Sr84_corr / Sr86_corr) * np.power((Sr84mass / Sr86mass), BetaSr)
+    Sr84_88_Corr = (Sr84_corr / Sr88_corr) * np.power((Sr84mass / Sr88mass), BetaSr)
 
-    Sr84_86_Corr = (Sr84 / Sr86) * np.power((Sr84mass / Sr86mass), BetaSr)
-    Sr84_88_Corr = (Sr84 / Sr88) * np.power((Sr84mass / Sr88mass), BetaSr)
-
-    Sr87_86_Corr = (Sr87 / Sr86) * np.power((Sr87mass / Sr86mass), BetaSr)
-    Rb87_Sr86_Corr = (Rb87 / Sr86) * np.power((Rb87mass / Sr86mass), BetaSr)
-
-
+    Sr87_86_Corr = (Sr87_corr / Sr86_corr) * np.power((Sr87mass / Sr86mass), BetaSr)
+    Rb87_Sr86_Corr = (Rb87_corr / Sr86_corr) * np.power((Rb87mass / Sr86mass), BetaSr)
 
     # Gather up intermediate channels and add them as time series:
-    int_channel_names = ['Sr84','Rb85','Sr86','Sr87','Sr88']
+    int_channel_names = ['Sr84_corr','Rb85_corr','Sr86_corr','Sr87_corr','Sr88_corr']
     int_channel_names += ['Sr87_86_Corr','BetaSr']
- 
 
-    int_channels = [Sr84,Rb85,Sr86,Sr87,Sr88]
+    int_channels = [Sr84_corr,Rb85_corr,Sr86_corr,Sr87_corr,Sr88_corr]
     int_channels += [Sr87_86_Corr,BetaSr]
-
 
     for name, channel in zip(int_channel_names, int_channels):
         data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
 
     drs.message("Calculating reference material corrected results...")
     drs.progress(70)
-
 
     try:
         StdSpline_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_Corr").data()
@@ -567,132 +556,84 @@ def runDRS():
 
     StdCorr_Sr87_86 = Sr87_86_Corr * StdValue_Sr87_86 / StdSpline_Sr87_86
 
-# Calculating Sr isotope ratio with adjusted Rb mass-bias factor (if "Rb_Beta_adjust" is selected)
-
+    # Calculating Sr isotope ratio with adjusted Rb mass-bias factor (if "Rb_Beta_adjust" is selected)
     if Rb_Beta_adjust:
-
-    	try:
-         RefRbValue_Sr87_86 = data.referenceMaterialData(Ref_Rb_Beta)["87Sr/86Sr"].value()
-         BetaRb = np.log(((SrRb87)-(RefRbValue_Sr87_86 /np.power((Sr87mass / Sr86mass), BetaSr)*Sr86))/(Rb85*Rb87_85_reference))/np.log(Rb85mass/Rb87mass)
-         int_channel_names += ['BetaRb']
-         int_channels += [BetaRb]
-         for name, channel in zip(int_channel_names, int_channels):
-             	data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)    
-         StdSpline_BetaRb = data.spline(Ref_Rb_Beta, "BetaRb").data()
+        try:
+            RefRbValue_Sr87_86 = data.referenceMaterialData(Ref_Rb_Beta)["87Sr/86Sr"].value()
+            BetaRb = np.log(((SrRb87_corr)-(RefRbValue_Sr87_86 /np.power((Sr87mass / Sr86mass), BetaSr)*Sr86_corr))/(Rb85_corr*Rb87_85_reference))/np.log(Rb85mass/Rb87mass)
+            data.createTimeSeries('BetaRb', data.Intermediate, indexChannel.time(), BetaRb)
+            StdSpline_BetaRb = data.spline(Ref_Rb_Beta, "BetaRb").data()
         
-    	except:
-         IoLog.error("The Combined Sr DRS requires Rb Beta Ref Material (with reference 87Sr/86Sr) selections to proceed.")
-         drs.message("DRS did not finish. Please check Messages")
-         drs.progress(100)
-         drs.finished()
-         return
+        except:
+            IoLog.error("The Combined Sr DRS requires Rb Beta Ref Material (with reference 87Sr/86Sr) selections to proceed.")
+            drs.message("DRS did not finish. Please check Messages")
+            drs.progress(100)
+            drs.finished()
+            return
 
+        Rb87_CorrRb = (Rb85_corr * Rb87_85_reference) / np.power((Rb87mass / Rb85mass), (StdSpline_BetaRb))
+        Sr87_CorrRb = (SrRb87_corr - Rb87_CorrRb)
+        Sr87_86_CorrRb = (Sr87_CorrRb / Sr86_corr) * np.power((Sr87mass / Sr86mass), BetaSr)
+        Rb87_Sr86_CorrRb = (Rb87_CorrRb / Sr86_corr) * np.power((Rb87mass / Sr86mass), BetaSr)
 
-   
-    	Rb87_CorrRb = (Rb85 * Rb87_85_reference) / np.power((Rb87mass / Rb85mass), (StdSpline_BetaRb))
-    	Sr87_CorrRb = (SrRb87 - Rb87_CorrRb)
-    	Sr87_86_CorrRb = (Sr87_CorrRb / Sr86) * np.power((Sr87mass / Sr86mass), BetaSr)
-    	Rb87_Sr86_CorrRb = (Rb87_CorrRb / Sr86) * np.power((Rb87mass / Sr86mass), BetaSr)
+        data.createTimeSeries('Sr87_86_CorrRb', data.Intermediate, indexChannel.time(), Sr87_86_CorrRb)
 
-    	int_channel_names += ['Sr87_86_CorrRb']
-
-    	int_channels += [Sr87_86_CorrRb]
-
-
-    	for name, channel in zip(int_channel_names, int_channels):
-        	data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
-
-    	StdSplineRb_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_CorrRb").data()
-    	StdCorrRb_Sr87_86 = Sr87_86_CorrRb * StdValue_Sr87_86 / StdSplineRb_Sr87_86
-
+        StdSplineRb_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_CorrRb").data()
+        StdCorrRb_Sr87_86 = Sr87_86_CorrRb * StdValue_Sr87_86 / StdSplineRb_Sr87_86
 
     else:
-    	BetaRb = BetaSr * RbBias
+        BetaRb = BetaSr * RbBias
+        data.createTimeSeries('BetaRb', data.Intermediate, indexChannel.time(), BetaRb)
 
-    	int_channel_names += ['BetaRb']
+        Rb87_CorrRb = (Rb85_corr * Rb87_85_reference) / np.power((Rb87mass / Rb85mass), (BetaRb))
+        Sr87_CorrRb = (SrRb87_corr - Rb87_CorrRb)
+        Sr87_86_CorrRb = (Sr87_CorrRb / Sr86_corr) * np.power((Sr87mass / Sr86mass), BetaSr)
+        Rb87_Sr86_CorrRb = (Rb87_CorrRb / Sr86_corr) * np.power((Rb87mass / Sr86mass), BetaSr)
 
-    	int_channels += [BetaRb]
+        data.createTimeSeries('Sr87_86_CorrRb', data.Intermediate, indexChannel.time(), Sr87_86_CorrRb)
 
+        StdSplineRb_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_CorrRb").data()
+        StdCorrRb_Sr87_86 = Sr87_86_CorrRb * StdValue_Sr87_86 / StdSplineRb_Sr87_86
 
-    	for name, channel in zip(int_channel_names, int_channels):
-        	data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
+    totalSrBeam = Sr84_corr + Sr86_corr + Sr87_CorrRb + Sr88_corr
+    data.createTimeSeries('totalSrBeam', data.Intermediate, indexChannel.time(), totalSrBeam)
 
-    	Rb87_CorrRb = (Rb85 * Rb87_85_reference) / np.power((Rb87mass / Rb85mass), (BetaRb))
-    	Sr87_CorrRb = (SrRb87 - Rb87_CorrRb)
-    	Sr87_86_CorrRb = (Sr87_CorrRb / Sr86) * np.power((Sr87mass / Sr86mass), BetaSr)
-    	Rb87_Sr86_CorrRb = (Rb87_CorrRb / Sr86) * np.power((Rb87mass / Sr86mass), BetaSr)
-
-    	int_channel_names += ['Sr87_86_CorrRb']
-
-    	int_channels += [Sr87_86_CorrRb]
-
-
-    	for name, channel in zip(int_channel_names, int_channels):
-        	data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
-    	
-    	StdSplineRb_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_CorrRb").data()
-    	StdCorrRb_Sr87_86 = Sr87_86_CorrRb * StdValue_Sr87_86 / StdSplineRb_Sr87_86
-
-
-    totalSrBeam = Sr84 + Sr86 + Sr87_CorrRb + Sr88
-    
-    int_channel_names += ['totalSrBeam']
-
-    int_channels += [totalSrBeam]
-
-    for name, channel in zip(int_channel_names, int_channels):
-        data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
-
-# Calculating fractionation-corrected Rb/Sr (if "Rb_Sr_elemental" is selcted)
-
+    # Calculating fractionation-corrected Rb/Sr (if "Rb_Sr_elemental" is selcted)
     if Rb_Sr_elemental:
-    	
-    	int_channel_names += ['Rb87_Sr86_CorrRb']
+        data.createTimeSeries('Rb87_Sr86_CorrRb', data.Intermediate, indexChannel.time(), Rb87_Sr86_CorrRb)
 
-    	int_channels += [Rb87_Sr86_CorrRb]
+        try:
+            Sr_conc = data.referenceMaterialData(Ref_Rb_Sr_elemental)["Sr"].value()
+            Rb_conc = data.referenceMaterialData(Ref_Rb_Sr_elemental)["Rb"].value()
+            StdSpline_RbSr = data.spline(Ref_Rb_Sr_elemental, "Rb87_Sr86_CorrRb").data()
+        except:
+            IoLog.error("The Combined Sr DRS requires Rb/Sr Ref Material selections to proceed.")
+            drs.message("DRS did not finish. Please check Messages")
+            drs.progress(100)
+            drs.finished()
+            return
 
-
-    	for name, channel in zip(int_channel_names, int_channels):
-        	data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
-
-    	try:
-         Sr_conc = data.referenceMaterialData(Ref_Rb_Sr_elemental)["Sr"].value()
-         Rb_conc = data.referenceMaterialData(Ref_Rb_Sr_elemental)["Rb"].value()
-         StdSpline_RbSr = data.spline(Ref_Rb_Sr_elemental, "Rb87_Sr86_CorrRb").data()
-    	except:
-         IoLog.error("The Combined Sr DRS requires Rb/Sr Ref Material selections to proceed.")
-         drs.message("DRS did not finish. Please check Messages")
-         drs.progress(100)
-         drs.finished()
-         return
-
-
-    	Rb87_Sr86_final = Rb87_Sr86_CorrRb * ((Rb_conc/Sr_conc) * (27.83 / 9.86)) / StdSpline_RbSr
-
+        Rb87_Sr86_final = Rb87_Sr86_CorrRb * ((Rb_conc/Sr_conc) * (27.83 / 9.86)) / StdSpline_RbSr
 
     else:
-    	Rb87_Sr86_final = Rb87_Sr86_CorrRb * Rb_Sr_fract
+        Rb87_Sr86_final = Rb87_Sr86_CorrRb * Rb_Sr_fract
 
-
-# Calculating age-corrected 87Sr/86Sr
-
+    # Calculating age-corrected 87Sr/86Sr
     Sr87_86_AgeCorr = StdCorrRb_Sr87_86 - Rb87_Sr86_final * (math.exp(0.000013972 * Age)-1)# 87Rb decay constant from Villa et al. (2015, Geoch. et Cosm. Acta)
 
-
-    #Output channels
-
+    # Output channels
     try:
-    	output_channels_names += ['Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
-    	output_channels += [StdCorr_Sr87_86,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
-    	for name, channel in zip(output_channels_names, output_channels):
-        	data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
+        output_channels_names = ['Er_Sr_ppm','Yb_Sr_ppm','Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
+        output_channels = [Er_Sr_ppm,Yb_Sr_ppm,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorr_Sr87_86,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
+        for name, channel in zip(output_channels_names, output_channels):
+            data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
 
     except:
 
-    	output_channels_names = ['Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
-    	output_channels = [StdCorr_Sr87_86,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
-    	for name, channel in zip(output_channels_names, output_channels):
-        	data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
+        output_channels_names = ['Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
+        output_channels = [Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorr_Sr87_86,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
+        for name, channel in zip(output_channels_names, output_channels):
+            data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
 
     if propErrors:
         drs.message("Propagating errors...")
@@ -700,7 +641,6 @@ def runDRS():
 
         groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
         data.propagateErrors(groups, [data.timeSeries("StdCorrRb_Sr87_86")], data.timeSeries("StdCorr_Sr87_86"), Sr_rmName)
-
 
 ##############################
 
@@ -750,8 +690,6 @@ def runDRS():
             g.setLineStyle('lsNone')
             g.setScatterStyle('ssDisc', 6.0, PLOT_COLORS[i])
             g.setData(np.array(sigs), np.array(devs))
-
-
 
         sigs_array = np.array(sigs_main)
         devs_array = np.array(devs_main)
@@ -834,13 +772,11 @@ def runDRS():
         CaPOCorr_Sr8786 = StdCorrRb_Sr87_86 / CaPO_corrAmt
         data.createTimeSeries('CaPOCorr_Sr8786', data.Output, indexChannel.time(), CaPOCorr_Sr8786)
 
-
     else:
         print("No CaPO correction invoked (no selected RMs)")
         PLOT.clearGraphs()
         ann.visible = False
         PLOT.replot()
-
 
     data.registerAssociatedResult("Corr_Sr8786_Sr88_V", getSelRatioIntensityCorr)
 
@@ -868,7 +804,6 @@ def settingsWidget():
     elif timeSeriesNames:
         defaultChannelName = timeSeriesNames[0]
 
-
     drs.setSetting("IndexChannel", defaultChannelName)
     drs.setSetting("ReferenceMaterial", "CO3_shell")
     drs.setSetting("Mask", True)
@@ -883,6 +818,7 @@ def settingsWidget():
     drs.setSetting("ReferenceMaterialRbSr", "G_BCR2G")
     drs.setSetting("Age", 0.)
     drs.setSetting("Dy_Er", 1.5)
+    drs.setSetting("Lu_Yb", 0.15)
     drs.setSetting("ProportionCaAr", 1.)
     drs.setSetting("ProportionNaNi", 1.)
     drs.setSetting("Sr88_86_reference", 8.37520938)  #Konter & Storm (2014)
@@ -900,7 +836,7 @@ def settingsWidget():
 
     settings = drs.settings()
 
-    DRS_message = QtGui.QLabel("This DRS requires data for the 87.5, 86.5, and 83.5 half-masses for the REE subtraction, mass 82 or 83 for the CaAr-CaCa subtraction, and mass 83 for the NaNi-CaAlO subtraction.\nIf you did not collect data for these channels, do not check the corresponding boxes. Otherwise you will get an error message.")
+    DRS_message = QtGui.QLabel("This DRS requires data at least 86.5 and 83.5 half-masses for the REE subtraction (also 87.5 and 81.5 for direct 176Lu++ and 164Dy++ correction), mass 82 or 83 for the CaAr-CaCa subtraction, and mass 83 for the NaNi-CaAlO subtraction.\nIf you did not collect data for these channels, do not check the corresponding boxes. Otherwise you will get an error message.")
     DRS_message.setStyleSheet('color:yellow')
     formLayout.addRow(DRS_message)
 
@@ -974,15 +910,18 @@ def settingsWidget():
     dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
     formLayout.addRow("Dy/Er ratio (default is approximately chondritic)", dyErLineEdit)
 
+    LuYbLineEdit = QtGui.QLineEdit(widget)
+    LuYbLineEdit.setText(settings["Lu_Yb"])
+    LuYbLineEdit.textChanged.connect(lambda t: drs.setSetting("Lu_Yb", float(t)))
+    formLayout.addRow("Lu/Yb ratio (default is approximately chondritic)", LuYbLineEdit)
+
     REEBiasLineEdit = QtGui.QLineEdit(widget)
     REEBiasLineEdit.setText(settings["REEBias"])
     REEBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("REEBias", float(t)))
     formLayout.addRow("Scale REE Beta (1 = BetaSr)", REEBiasLineEdit)
 
-
     verticalSpacer4 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer4)
-
 
     CaArCheckBox = QtGui.QCheckBox(widget)
     CaArCheckBox.setChecked(settings["CaAr_CaCa_subtract"])
@@ -1004,10 +943,8 @@ def settingsWidget():
     CaArBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("CaArBias", float(t)))
     formLayout.addRow("Scale CaAr-CaCa Beta (1 = BetaSr)", CaArBiasLineEdit)
 
-
     verticalSpacer5 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer5)
-
 
     NaNiCheckBox = QtGui.QCheckBox(widget)
     NaNiCheckBox.setChecked(settings["NaNi_CaAlO_subtract"])
@@ -1024,10 +961,8 @@ def settingsWidget():
     NaNiBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("NaNiBias", float(t)))
     formLayout.addRow("Scale NaNi-CaAlO Beta (1 = BetaSr)", NaNiBiasLineEdit)
 
-
     verticalSpacer6 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer6)
-
 
     RbBetaCheckBox = QtGui.QCheckBox(widget)
     RbBetaCheckBox.setChecked(settings["Rb_Beta_adjust"])
@@ -1045,10 +980,8 @@ def settingsWidget():
     RbBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("RbBias", float(t)))
     formLayout.addRow("Scale Rb Beta (if Rb Beta adjust unchecked; 1 = BetaSr)", RbBiasLineEdit)
 
-
     verticalSpacer7 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer7)
-
 
     RbSrCheckBox = QtGui.QCheckBox(widget)
     RbSrCheckBox.setChecked(settings["Rb_Sr_elemental"])
