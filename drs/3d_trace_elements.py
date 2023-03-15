@@ -138,7 +138,7 @@ class Block(object):
         self.df = None
 
     def hash(self):
-        shash = np.sum([s.midTimeInSec for s in self.selections])
+        shash = np.sum([s.midTimestamp for s in self.selections])
         thash = np.sum([c.hash() for c in data.timeSeriesList(data.Intermediate, {'DRSType': 'BaselineSubtracted'}) if 'TotalBeam' not in c.name])
         drshash = drs.setting('NormalizeExternals') + np.sum([ord(a) for a in drs.setting('MasterExternal')])
         return shash+thash+drshash
@@ -150,7 +150,7 @@ class Block(object):
         return self.hash() + ftz + model
 
     def midTime(self):
-        return np.mean([s.midTimeInSec for s in self.selections])
+        return np.mean([s.midTimestamp for s in self.selections])
 
     def dataFrame(self):
         if self.df is None or self.lastDFHash != self.hash():
@@ -178,40 +178,43 @@ class Block(object):
         channelNames = [n for n in data.timeSeriesNames(data.Input) if 'TotalBeam' not in n]
         cpsChannels = [data.timeSeries(f'{c}_CPS') for c in channelNames]
 
-        for sel in self.selections:
-            uuid = sel.property('UUID')
-            rmdata = data.referenceMaterialData(sel.group().name)
+        temp_df = data.frame(self.selections, ['UUID', 'group name', 'mid time', 'duration'], cpsChannels, ['mean', 'int2se'])
 
-            # Original approach was to use the nanmedian of ablation factors:
-            norm = ryields[sel.group().name] if drs.setting('NormalizeExternals') else 1
-            # There can be noticable Tc dependent variation of af, so going to try fitting that...
-            #abdf = abdf.dropna()
-            #smx = sm.add_constant(abdf['Tc'], prepend=False)
-            #smy = abdf[sel.group().name]
-            #res = sm.RLM(smy, smx).fit()
+        if temp_df is None:
+            print(f'Could not get frame...')
 
-            if sel.isLinked():
-                self.df.loc[uuid, 'sel_mid_time'] = float(sel.linkedMidTimeInSec())
-            else:
-                self.df.loc[uuid, 'sel_mid_time'] = float(sel.midTimeInSec)
+        temp_df = temp_df.set_index('UUID')
+        temp_df = temp_df.rename(columns={
+            'group name': 'group',
+            'mid time': 'sel_mid_time',
+            'duration': 'sel_duration'
+        })
+        temp_df = temp_df.rename(columns={f'{c}_CPS mean': f'{c}' for c in channelNames})
+        temp_df = temp_df.rename(columns={f'{c}_CPS int2se': f'{c}_Uncert' for c in channelNames})
 
-            self.df.loc[uuid, 'sel_duration'] = float(sel.duration)
-            self.df.loc[uuid, 'group'] = sel.group().name
+        groups = temp_df['group'].unique()
+
+        for group in groups:
+            norm = ryields[group] if drs.setting('NormalizeExternals') else 1
+            rmdata = data.referenceMaterialData(group)
 
             for name, channel in zip(channelNames, cpsChannels):
                 try:
-                    #norm = linear(res.params, data.elements[channel.property('Element')]['Tcond_Lodders'])
-                    self.df.loc[uuid, name] = data.result(sel, channel).value()/norm
-                    self.df.loc[uuid, f'{name}_Uncert'] = data.result(sel, channel).uncertaintyAs2SE()/(norm)
+                    temp_df.loc[temp_df['group'] == group, name] /= norm
+                    temp_df.loc[temp_df['group'] == group, f'{name}_Uncert'] /= norm
                     rmValue = rmdata[channel.property('Element')].valueInPPM()
                     rmUncert = rmdata[channel.property('Element')].uncertainty()
-                    self.df.loc[uuid, f'{name}_RMppm'] = rmValue
-                    self.df.loc[uuid, f'{name}_RMppm_Uncert'] = rmUncert if rmUncert else rmValue*0.02
-                except:
-                    self.df.loc[uuid, f'{name}_RMppm'] = np.nan
-                    self.df.loc[uuid, f'{name}_RMppm_Uncert'] = np.nan
+
+                    if rmUncert == 0:
+                        print(f'Zero RM uncertainty for {channel.name} for {group}. Replacying uncertainty with 0.00001')
+                        rmUncert = 0.00001
+
+                    temp_df.loc[temp_df['group'] == group, f'{name}_RMppm'] = rmValue
+                    temp_df.loc[temp_df['group'] == group, f'{name}_RMppm_Uncert'] = rmUncert if rmUncert else rmValue*0.02
+                except Exception as e:
                     continue
 
+        self.df = temp_df
         self.df = self.df.sort_values(by=['sel_mid_time'])
         self.lastDFHash = self.hash()
 
@@ -261,7 +264,12 @@ class Block(object):
         func = lineartz if fitThroughZero or len(df['group'].unique()) == 1 else linear
         if len(df['group'].unique()) == 1:
             slope = df[name].mean()/df[f'{name}_RMppm'].mean()
-            slope_uncert = (df[name].mean()/df[f'{name}_RMppm'].mean())*(df[f'{name}_Uncert'].mean()/df[name].mean())
+            try:
+                slope_uncert = (df[name].mean()/df[f'{name}_RMppm'].mean())*(df[f'{name}_Uncert'].mean()/df[name].mean())
+            except ZeroDivisionError:
+                print(f'Replaced slope uncertainty with 0 for {name} due to a ZeroDivisionError')
+                slope_uncert = 0.
+
             intercept = 0.
             intercept_uncert = 0.
             res = None
@@ -357,7 +365,7 @@ def calculateRelativeYields():
 
     # Todo: investigate whether there are any trends with the relative yield and mass or Tc?
     df = pd.DataFrame(M, columns=groupNames)
-    df['Tc'] = [data.elements[c.property('Element')]['Tcond_Lodders'] for c in cpsChannels]
+    #df['Tc'] = [data.elements[c.property('Element')]['Tcond_Lodders'] for c in cpsChannels]
     df['Element'] = [c.property('Element') for c in cpsChannels]
     ablationFactors = dict(zip(groupNames, np.nanmedian(M, axis=0)))
     return ablationFactors, df
@@ -481,8 +489,8 @@ def findBlocks(method=None):
         if sel.property("UUID") in component_sels:
             selections.remove(sel)
 
-    selections.sort(key=lambda s: s.midTimeInSec)
-    selMidTimes = [s.midTimeInSec if not s.isLinked() else s.linkedMidTimeInSec() for s in selections]
+    selections.sort(key=lambda s: s.midTimestamp)
+    selMidTimes = [s.midTimestamp if not s.isLinked() else s.linkedmidTimestamp() for s in selections]
     selMidTimes.sort()
 
     def assignedBlock(s):
@@ -589,17 +597,24 @@ def fitSurface(blocks, channelName):
     data.createTimeSeries(f'{channelName}_intercept', data.Intermediate, cpsChannel.time(), intercept_spl, {'DRS': '3D Trace Elements'})
 
     def surface(t, c):
-        i = np.searchsorted(cpsChannel.time(), t)
-        m = slope_spl[i]
-        b = intercept_spl[i]
-        return m*c + b
+        if len(t) != len(cpsChannel.time()):
+            i = np.searchsorted(cpsChannel.time(), t)
+            m = slope_spl[i]
+            b = intercept_spl[i]
+            return m*c + b
+        else:
+            return slope_spl*c + intercept_spl
+
 
     def surfaceInv(t, I):
-        i = np.searchsorted(cpsChannel.time(), t)
-        m = slope_spl[i]
-        b = intercept_spl[i]
-        # I = m*c + b, so c = (I - b)/m
-        return (I - b)/m
+        if len(t) != len(cpsChannel.time()):
+            i = np.searchsorted(cpsChannel.time(), t)
+            m = slope_spl[i]
+            b = intercept_spl[i]
+            # I = m*c + b, so c = (I - b)/m
+            return (I - b)/m
+        else:
+            return (I - intercept_spl)/slope_spl
 
     return surface, surfaceInv
 
@@ -772,6 +787,20 @@ class Calibration(object):
 
         return t, r, rsd, spline
 
+    def uncertainty(self, name):
+        # There is a (small) chance that there may be zero counts for our RM
+        # for a particular channel. If we only have one RM, this will result in
+        # a slope of 0, and we'll get  a divide by zero exception below....
+        # Just going to replace any 0 slopes with very small numbers below...
+        slopes = [block.slope(name) for block in self.blocks]
+        for i, s in enumerate(slopes):
+            if s == 0:
+                slopes[i] = 0.00000001
+                print(f'Replaced slope for Block {i} for {name}')
+
+        uncerts = [block.slopeUncert(name) for block in self.blocks]
+        return np.mean([uncert / slope for uncert, slope in zip(uncerts, slopes)])
+        # return np.mean([block.slopeUncert(name)/block.slope(name) for block in self.blocks])
 
 #    def materialFractionation(self, selection, masterExt):
 #        '''
@@ -824,9 +853,6 @@ class Calibration(object):
 #        return (t, fd), partial(linear, (fit[0], fit[1]))
 
 #        #return (masterSQ/selectionSQ) * (isValue/masterPPM)
-
-    def uncertainty(self, name):
-        return np.mean([block.slopeUncert(name)/block.slope(name) for block in self.blocks])
 
 
 def runDRS():
@@ -887,6 +913,7 @@ def runDRS():
 
 
     drs.clearSelectionProperties(QRegularExpression("Sensitivity.+"))
+    drs.clearSelectionProperties(QRegularExpression("External Sensitivity.+"))
 
     indexChannel = data.timeSeries(settings["IndexChannel"])
     drs.setIndexChannel(indexChannel)
@@ -896,21 +923,25 @@ def runDRS():
     drs.progress(5)
     drs.setIndexChannel(indexChannel)
 
-    try:
-        blGrp = data.selectionGroupList(data.Baseline)[0]
-    except:
-        IoLog.error("There are no baseline groups. 3D Trace Elements cannot proceed...")
-        drs.message("Error. See Messages")
-        drs.progress(100)
-        drs.finished()
-        return
+    # Check if we need to do baseline subtractions:
+    bl_required = not np.all(np.array([bool(ch.property('BackgroundSubtracted')) for ch in data.timeSeriesList(data.Input) if 'TotalBeam' not in ch.name]))
 
-    if len(blGrp.selections()) < 1:
-        IoLog.error("No baseline selections. Please select some baselines. 3D Trace Elements cannot proceed...")
-        drs.message("Error. See Messages")
-        drs.progress(100)
-        drs.finished()
-        return
+    if bl_required:
+        try:
+            blGrp = data.selectionGroupList(data.Baseline)[0]
+        except:
+            IoLog.error("There are no baseline groups. 3D Trace Elements cannot proceed...")
+            drs.message("Error. See Messages")
+            drs.progress(100)
+            drs.finished()
+            return
+
+        if len(blGrp.selections()) < 1:
+            IoLog.error("No baseline selections. Please select some baselines. 3D Trace Elements cannot proceed...")
+            drs.message("Error. See Messages")
+            drs.progress(100)
+            drs.finished()
+            return
 
     # Setup the mask
     maskOption = settings["Mask"]
@@ -919,13 +950,13 @@ def runDRS():
         drs.message("Making mask...")
         drs.progress(10)
         maskMethod = settings['MaskMethod']
+        trim = settings["MaskTrim"]
 
         if 'Laser' in maskMethod:
             mask = drs.createMaskFromLaserLog(trim)
         else:
             maskChannel = data.timeSeries(settings["MaskChannel"])
             cutoff = settings["MaskCutoff"]
-            trim = settings["MaskTrim"]
             mask = drs.createMaskFromCutoff(maskChannel, cutoff, trim)
         data.createTimeSeries('mask', data.Intermediate, indexChannel.time(), mask)
     else:
@@ -943,9 +974,15 @@ def runDRS():
         totalPbChannel.setProperty('External standard', pb.property('External standard'))
         totalPbChannel.setProperty('FitThroughZero', pb.property('FitThroughZero'))
         totalPbChannel.setProperty('Model', pb.property('Model'))
+        if bool(pb.property('BaselineSubtracted')):
+            totalPbChannel.setProperty('BaselineSubtracted', pb.property('BaselineSubtracted'))
 
     # Baseline Subtraction
-    drs.baselineSubtract(blGrp, data.timeSeriesList(data.Input), mask, 10, 20)
+    if bl_required:
+        drs.baselineSubtract(blGrp, data.timeSeriesList(data.Input), mask, 10, 20)
+    else:
+        drs.baselineSubtract(None, data.timeSeriesList(data.Input), mask, 10, 20)
+
 
     # Check that some Externals have been selected:
     atLeastOneExt = False
@@ -978,7 +1015,9 @@ def runDRS():
         try:
             surface = cal.surface(input.name, inv=True)
         except:
-            IoLog.warning(f"There was an issue calculating the surface for {input.name}")
+            IoLog.warning(
+                f"There was an issue calculating the calibration surface for {input.name}. \
+                This may be due to missing concentration values for your reference materials.")
             continue
 
         if not surface:
@@ -1152,12 +1191,15 @@ def runDRS():
         # Replace parts that end up inf with 1
         norm[np.abs(norm) == np.inf] = 1
 
-        data.createTimeSeries('Norm', data.Intermediate, indexChannel.time(), norm, commonProps)
         data.createTimeSeries('CriteriaIndex', data.Intermediate, indexChannel.time(), crit_index, commonProps)
 
         for c in data.timeSeriesList(data.Output):
             d = c.data()*norm
             c.setData(d)
+
+        # Not going to use the built in drs yield calculator because it doesn't handle
+        # multi element the best and also doesn't handle criteria
+        data.createTimeSeries('RelativeYield', data.Intermediate, indexChannel.time(), 1/norm, commonProps)
 
 
     data.updateResults()
@@ -1176,9 +1218,14 @@ def runDRS():
                     meas = data.groupResult(data.selectionGroup(ext), ppmc).value()
                     extFactors[ext][ppmc.name] = meas/rm
                     if abs(extFactors[ext][ppmc.name]-1) > 0.15:
-                        print(f'Not going to correct {ppmc.name} for {ext} due to its large relative difference from the accepted value')
+                        print(f'Not going to correct {ppmc.name} for {ext} due to' \
+                        'its large relative difference from the accepted value: ' \
+                        f'{abs(extFactors[ext][ppmc.name]-1):.2f}')
                         extFactors[ext][ppmc.name] = 1.
                         continue
+                    else:
+                        print(f'Will apply an affinity correction ' \
+                              f'of {extFactors[ext][ppmc.name] * 100.:.2f}% for {ppmc.name}')
                 except Exception as e:
                     print(e)
 
@@ -1202,27 +1249,28 @@ def runDRS():
     # Store sensitivities so LODs can be determined by results manager
     drs.message.emit('Storing sensitivities')
     drs.progress.emit(95)
-    badSels = []
-    for sel in sels:
-        badChannels = []
-        for cps in data.timeSeriesList(data.Intermediate):
-            if 'CPS' not in cps.name or 'TotalBeam' in cps.name:
-                continue
-            try:
-                ppm = data.timeSeries(cps.name.replace('CPS', 'ppm'))
-                s = data.result(sel, cps).value()/data.result(sel, ppm).value()
-                sel.setProperty('Sensitivity %s'%(cps.name.replace('_CPS', '')), s)
-            except:
-                badChannels.append(cps.name.replace('CPS', 'ppm'))
-                continue
+    drs.storeExternalSensitivities()
+    # badSels = []
+    # for sel in sels:
+    #     badChannels = []
+    #     for cps in data.timeSeriesList(data.Intermediate):
+    #         if 'CPS' not in cps.name or 'TotalBeam' in cps.name:
+    #             continue
+    #         try:
+    #             ppm = data.timeSeries(cps.name.replace('CPS', 'ppm'))
+    #             s = data.result(sel, cps).value()/data.result(sel, ppm).value()
+    #             sel.setProperty('Sensitivity %s'%(cps.name.replace('_CPS', '')), s)
+    #         except:
+    #             badChannels.append(cps.name.replace('CPS', 'ppm'))
+    #             continue
+    #
+    #     badSels.append(sel)
 
-        badSels.append(sel)
-
-    badChannelsString = ', '.join(badChannels)
-    badChannelsString = badChannelsString if len(badChannelsString) < 25 else badChannelsString[0:23]+'...'
-    badSelsString = ', '.join([s.name for s in badSels])
-    badSelsString = badSelsString if len(badSelsString) < 25 else badSelsString[0:23]+'...'
-    IoLog.warning(f'There was a problem calculating the sensitivity of {badChannelsString} for selection(s) {badSelsString}')
+    #badChannelsString = ', '.join(badChannels)
+    #badChannelsString = badChannelsString if len(badChannelsString) < 25 else badChannelsString[0:23]+'...'
+    #badSelsString = ', '.join([s.name for s in badSels])
+    #badSelsString = badSelsString if len(badSelsString) < 25 else badSelsString[0:23]+'...'
+    #IoLog.warning(f'There was a problem calculating the sensitivity of {badChannelsString} for selection(s) {badSelsString}')
 
     # Need to update results again to get LODs calculated
     data.updateResults()
@@ -1245,10 +1293,10 @@ class ExternalsModel(QAbstractTableModel):
 
     def refreshChannels(self):
         self.beginResetModel()
-        self.channels = [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]
+        self.channels = [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name and 'AllLight' not in c.name]
 
         try:
-            drs.baselineSubtract(data.selectionGroupList(data.Baseline)[0], data.timeSeriesList(data.Input), None, 0, 0)
+            drs.baselineSubtract(None, data.timeSeriesList(data.Input), None, 0, 0)
             for c in data.timeSeriesList(data.Input):
                 if not c.property('Model'):
                     c.setProperty('Model', 'ODR')
@@ -2193,11 +2241,13 @@ class BlockPlot(QWidget):
             if sel.property("UUID") in component_sels:
                 selections.remove(sel)
 
-        selMidTimes = [s.midTimeInSec if not s.isLinked() else s.linkedMidTimeInSec() for s in selections]
+        selMidTimes = [s.midTimestamp if not s.isLinked() else s.linkedmidTimestamp() for s in selections]
         selMidTimes.sort()
 
         blockModel = BlockAssignmentsModel(selections, d)
-        table.setModel(blockModel)
+        sortModel = QSortFilterProxyModel(d)
+        sortModel.setSourceModel(blockModel)
+        table.setModel(sortModel)
 
         def update():
             print('update...')
@@ -2737,9 +2787,9 @@ class JacksonPlot(Plot):
             try:
                 isChannel = data.timeSeries(f'{ise}_CPS')
                 isSurface = self.settingsWidget.calibration.surface(ise, inv=True)
-                sqPPM = channelSurface(sel.midTimeInSec, data.result(sel, cps).value())
+                sqPPM = channelSurface(sel.midTimestamp, data.result(sel, cps).value())
                 rmPPM = data.referenceMaterialData(sel.group().name)[data.timeSeries(ise).property('Element')].valueInPPM()
-                isPPM = isSurface(sel.midTimeInSec, data.result(sel, isChannel).value())
+                isPPM = isSurface(sel.midTimestamp, data.result(sel, isChannel).value())
                 conc[i] = rmPPM*sqPPM/isPPM
             except Exception as e:
                 print(e)
@@ -2787,6 +2837,7 @@ class ExtModelDialog(QDialog):
         self.layout().addWidget(bb)
         self.channelsTable = QTableWidget(self)
         self.allChannels = [c.name for c in data.timeSeriesList(data.Input) if 'Total' not in c.name]
+        self.ion_energies = [data.elements[c.property("Element")]['ionizationEnergies'][0] for c in data.timeSeriesList(data.Input) if 'Total' not in c.name]
         self.channelsTable.setRowCount(len(self.allChannels))
         self.channelsTable.setColumnCount(2)
         self.channelsTable.setHorizontalHeaderLabels(['Channel', 'Abundance'])
@@ -2806,6 +2857,7 @@ class ExtModelDialog(QDialog):
                 ab = 1
             self.channelsTable.setItem(ri, 1, QTableWidgetItem(f'{ab:.6f}'))
             self.channelsTable.item(ri, 0).setData(Qt.UserRole, True)
+
             if data.timeSeries(name).property('External standard') == 'Model':
                 # If this is a channel using a model, highlight the items differently
                 self.channelsTable.item(ri, 0).setData(Qt.UserRole, False)
@@ -2850,6 +2902,12 @@ class ExtModelDialog(QDialog):
         self.fitComboBox.setCurrentText(self.fitType())
         self.fitComboBox.textActivated.connect(self.updateFitType)
         leftWidget.layout().addRow('Fit type', self.fitComboBox)
+
+        self.ie_checkBox = QCheckBox('', self)
+        self.ie_checkBox.setChecked(drs.setting('UseIonizationEnergies'))
+        self.ie_checkBox.clicked.connect(self.toggle_ie)
+        leftWidget.layout().addRow('Use Ionisation Energies?', self.ie_checkBox)
+
         mainLayout.addWidget(leftWidget)
         mainLayout.addWidget(self.plot)
         self.resize(1200, 600)
@@ -2915,6 +2973,11 @@ class ExtModelDialog(QDialog):
 
         self.updatePlot()
 
+    def toggle_ie(self, b):
+        drs.setSetting('UseIonizationEnergies', b)
+
+        self.updatePlot()
+
     def processCellChanged(self, row, col):
         # Only process changes in col == 1 == abundance
         if col != 1:
@@ -2949,10 +3012,14 @@ class ExtModelDialog(QDialog):
 
         # Quick note for future selves: can't plot channel sensitivities in one go because it will have to update if the user
         # changes any of the isotopic abundances in the table. So, can't put main plotting in __init__() for example
+        # However, we can do it for ionization energies because the user can't change those
         for bi, block in enumerate(self.calibration.blocks):
             block_graph = self.plot.addGraph()
             block_graph.setName(f"Block {bi + 1}")
-            channelSens = np.array([sensForChannel(block, cn) for cn in self.allChannels], dtype=np.float) / channelAbundances
+            if drs.setting('UseIonizationEnergies'):
+                channelSens = np.array([sensForChannel(block, cn) for cn in self.allChannels], dtype=np.float) / channelAbundances / self.ion_energies
+            else:
+                channelSens = np.array([sensForChannel(block, cn) for cn in self.allChannels], dtype=np.float) / channelAbundances
             block_graph.setData(channelMasses[np.isfinite(channelSens)], channelSens[np.isfinite(channelSens)])
             color = self.colorGrad.color(bi, 0, len(self.calibration.blocks))
             block_graph.setScatterStyle('ssDisc', 6, color, color)
@@ -3005,6 +3072,11 @@ class ExtModelDialog(QDialog):
 
         self.plot.setLegendVisible(self.showLegend)
         self.plot.setLegendAlignment(Qt.AlignTop | Qt.AlignLeft)
+        if drs.setting('UseIonizationEnergies'):
+            self.plot.left().label = 'Abundance and ionization energy corrected CPS/ppm'
+        else:
+            self.plot.left().label = 'Abundance corrected CPS/ppm'
+
 
         self.plot.replot()
 
@@ -3014,11 +3086,13 @@ class ExtModelDialog(QDialog):
         try:
             mass = float(data.timeSeries(channel_name).property('Mass'))
             table_row = self.channelsTable.findItems(channel_name, Qt.MatchFixedString)[0].row()
+            print(f'Table row: {table_row}')
             abund = float(self.channelsTable.item(table_row, 1).text())
         except:
             print(f'Could not calculate block sensitivities for {channel_name}')
             mass = np.nan
             abund = np.nan
+            ie = np.nan
 
         bs = {}
         for bi, block in enumerate(self.calibration.blocks):
@@ -3160,6 +3234,7 @@ class SettingsWidget(QWidget):
         drs.setDefaultSetting('BlockFindingMethod', 'Simple')
         drs.setDefaultSetting('NClusters', -1)
         drs.setDefaultSetting('ISCriteria', [])
+        drs.setDefaultSetting('UseIonizationEnergies', False)
 
         drs.setSetting('AffinityCorrection', False)
 
@@ -3397,6 +3472,17 @@ class SettingsWidget(QWidget):
         # Apply dialog settings to selected channels...
         for channel in self.selectedChannels:
             bs = w.blockSensitivities(channel.name)
+
+            if drs.setting('UseIonizationEnergies') and len(bs.keys()) > 0:
+                print("Correcting for ionization energies")
+                i_e = data.elements[channel.property("Element")]['ionizationEnergies'][0]
+
+                for key in bs.keys():
+                    bs[key] = bs[key] * i_e
+
+            else:
+                print("No ionization energy correction...")
+
             channel.setProperty('ModelSensitivities', bs)
 
         self.processExtSelection()
@@ -3651,7 +3737,7 @@ class SettingsWidget(QWidget):
 
         # Check that all channels have an element set so that it doesn't cause errors below
         for ch in data.timeSeriesList(data.Input):
-            if ch.name == 'TotalBeam':
+            if ch.name == 'TotalBeam' or ch.name == 'AllLight':
                 continue
             if not ch.property('Element') or len(ch.property('Element')) < 1:
                 print(f"There was an issue with {ch.name}")
