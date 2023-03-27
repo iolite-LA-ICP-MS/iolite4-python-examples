@@ -202,8 +202,12 @@ class Block(object):
                 try:
                     temp_df.loc[temp_df['group'] == group, name] /= norm
                     temp_df.loc[temp_df['group'] == group, f'{name}_Uncert'] /= norm
-                    rmValue = rmdata[channel.property('Element')].valueInPPM()
-                    rmUncert = rmdata[channel.property('Element')].uncertainty()
+                    try:
+                        rmValue = rmdata[channel.property('Element')].valueInPPM()
+                        rmUncert = rmdata[channel.property('Element')].uncertainty()
+                    except KeyError as e:
+                        print(f'There was no RM value for {e} for \'{group}\'')
+                        continue
 
                     if rmUncert == 0:
                         print(f'Zero RM uncertainty for {channel.name} for {group}. Replacying uncertainty with 0.00001')
@@ -212,6 +216,7 @@ class Block(object):
                     temp_df.loc[temp_df['group'] == group, f'{name}_RMppm'] = rmValue
                     temp_df.loc[temp_df['group'] == group, f'{name}_RMppm_Uncert'] = rmUncert if rmUncert else rmValue*0.02
                 except Exception as e:
+                    print(f'DataFrame Creation Exception: {e}')
                     continue
 
         self.df = temp_df
@@ -2221,7 +2226,20 @@ class BlockPlot(QWidget):
         table.setSelectionMode(table.ExtendedSelection)
         table.setSelectionBehavior(table.SelectRows)
 
-        externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name])))
+        # Changing line below to loop because below will fail if not Ext Stds set for all channels
+        #externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name])))
+        externalsInUse = []
+        for c in data.timeSeriesList(data.Input):
+            if 'TotalBeam' in c.name:
+                continue
+            if type(c.property('External standard')) != str:
+                print(c.name + " had no Ext Std set and so it's been skipped in creating list of Ext Stds")
+                continue
+
+            externalsInUse.append(c.property('External standard').split(','))
+
+        externalsInUse = set(list(itertools.chain(*externalsInUse)))
+
         try:
             externalsInUse.remove('Model')
         except KeyError:
@@ -2351,6 +2369,12 @@ class BlockPlot(QWidget):
             return
 
         # First, make sure we have RM values for this channel:
+        if f'{channel}_RMppm' not in self.settingsWidget.calibration.blocks[0].dataFrame().columns:
+            print(f'No valid values for reference materials for {channel}')
+            self.plot.rescaleAxes()
+            self.plot.replot()
+            return
+
         this_df = self.settingsWidget.calibration.blocks[0].dataFrame()[f'{channel}_RMppm']
         if not this_df.notna().values.any() and extStd != 'Model':
             print(f'No valid values for reference materials for {channel}')
@@ -2551,6 +2575,11 @@ class FitsPlot(Plot):
                 self.annotate('*Modeled', 0.9, 0.9, 'ptAxisRectRatio', Qt.AlignCenter, Qt.AlignCenter, False)
 
             else:
+                if f'{channel}_RMppm' not in df.columns:
+                    print(f'No valid values for reference materials for {channel}')
+                    self.replot()
+                    return
+
                 if not df[f'{channel}_RMppm'].notna().values.any():
                     self.replot()
                     return
@@ -2601,6 +2630,11 @@ class FitParamsPlot(Plot):
             return
 
         block_times = [block.midTime() for block in self.settingsWidget.calibration.blocks]
+
+        if f'{channel}_RMppm' not in self.settingsWidget.calibration.blocks[0].dataFrame().columns:
+            print(f'No valid values for reference materials for {channel}')
+            self.replot()
+            return
 
         if not self.settingsWidget.calibration.blocks[0].dataFrame()[f'{channel}_RMppm'].notna().values.any() and extStd != 'Model':
             self.replot()
@@ -3782,7 +3816,9 @@ class SettingsWidget(QWidget):
 
         # Check to make sure we have RM values for this channel
         extStd = channel.property('External standard')
-        if not self.calibration.blocks[0].dataFrame()[f'{channel.name}_RMppm'].notna().values.any() and extStd != 'Model':
+        if f'{channel.name}_RMppm' not in self.calibration.blocks[0].dataFrame().columns:
+            self.surface = None
+        elif not self.calibration.blocks[0].dataFrame()[f'{channel.name}_RMppm'].notna().values.any() and extStd != 'Model':
             self.surface = None
         elif type(extStd) == str and (extStd.split(',')[0] in data.selectionGroupNames() or extStd == 'Model'):
             self.surface, _ = fitSurface(self.calibration.blocks, channel.name)
