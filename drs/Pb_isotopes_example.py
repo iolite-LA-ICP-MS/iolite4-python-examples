@@ -51,10 +51,33 @@ def runDRS():
 
     drs.baselineSubtract(data.selectionGroup("Baselines"), allInputChannels, mask, 25, 35)
 
+    drs.message("Calculating raw ratios...")
+    drs.progress(35)
+
     # Calculate raw ratios:
     Pb208_CPS = data.timeSeriesByMass(data.Intermediate, 208., 0.1).data()
+    Pb207_CPS = data.timeSeriesByMass(data.Intermediate, 207., 0.1).data()
     Pb206_CPS = data.timeSeriesByMass(data.Intermediate, 206., 0.1).data()
-    Pb86_raw = Pb208_CPS / Pb206_CPS
+    m204_CPS = data.timeSeriesByMass(data.Intermediate, 204., 0.1).data()
+    Hg202_CPS = data.timeSeriesByMass(data.Intermediate, 202., 0.1).data()
+
+    Pb86_raw = Pb208_CPS / Pb206_CPS * mask
+    Pb76_raw = Pb207_CPS / Pb206_CPS * mask
+
+    Pb204 = m204_CPS - Hg202_CPS * 0.2299
+    Pb84_raw = Pb208_CPS / Pb204 * mask
+    Pb74_raw = Pb207_CPS / Pb204 * mask
+    Pb64_raw = Pb206_CPS / Pb204 * mask
+
+    data.createTimeSeries("Pb204_CPS", data.Intermediate, indexChannel.time(), Pb204)
+    data.createTimeSeries("raw 208Pb/204Pb", data.Intermediate, indexChannel.time(), Pb84_raw)
+    data.createTimeSeries("raw 207Pb/204Pb", data.Intermediate, indexChannel.time(), Pb74_raw)
+    data.createTimeSeries("raw 206Pb/204Pb", data.Intermediate, indexChannel.time(), Pb64_raw)
+    data.createTimeSeries("raw 208Pb/206Pb", data.Intermediate, indexChannel.time(), Pb86_raw)
+    data.createTimeSeries("raw 207Pb/206Pb", data.Intermediate, indexChannel.time(), Pb76_raw)
+
+    drs.message("Correcting for mass fractionation...")
+    drs.progress(75)
 
     try:
         StdValue_208_206 = data.referenceMaterialData(rmName)["208Pb/206Pb"].value()
@@ -67,14 +90,22 @@ def runDRS():
 
     Pb_f = (np.log(StdValue_208_206 / (Pb208_CPS / Pb206_CPS))) / (np.log(207.976627 / 205.974440))
 
-    data.createTimeSeries("Pb208/Pb206 raw", data.Intermediate, indexChannel.time(), Pb86_raw)
     data.createTimeSeries("Pb_f", data.Intermediate, indexChannel.time(), Pb_f)
 
     data.updateResults()
-    StdSpline_86 = data.spline(rmName, "Pb_f").data()
+    StdSpline_PbF = data.spline(rmName, "Pb_f").data()
 
-    Pb86_corr = Pb86_raw * np.power((207.976627/205.974440), StdSpline_86)
-    data.createTimeSeries("Pb86_corr", data.Output, indexChannel.time(), Pb86_corr)
+    Pb86_corr = Pb86_raw * np.power((207.976627/205.97446), StdSpline_PbF)
+    Pb76_corr = Pb76_raw * np.power((206.97589/205.97446), StdSpline_PbF)
+    Pb84_corr = Pb84_raw * np.power((207.976627/203.97304), StdSpline_PbF)
+    Pb74_corr = Pb74_raw * np.power((206.97589/203.97304), StdSpline_PbF)
+    Pb64_corr = Pb64_raw * np.power((205.97446/203.97304), StdSpline_PbF)
+
+    data.createTimeSeries("Final 208Pb/206Pb", data.Output, indexChannel.time(), Pb86_corr)
+    data.createTimeSeries("Final 207Pb/206Pb", data.Output, indexChannel.time(), Pb76_corr)
+    data.createTimeSeries("Final 208Pb/204Pb", data.Output, indexChannel.time(), Pb84_corr)
+    data.createTimeSeries("Final 207Pb/204Pb", data.Output, indexChannel.time(), Pb74_corr)
+    data.createTimeSeries("Final 206Pb/204Pb", data.Output, indexChannel.time(), Pb64_corr)
 
     drs.message("Finished!")
     drs.progress(100)
