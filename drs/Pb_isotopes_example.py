@@ -64,12 +64,12 @@ def runDRS():
     Pb86_raw = Pb208_CPS / Pb206_CPS * mask
     Pb76_raw = Pb207_CPS / Pb206_CPS * mask
 
-    Pb204 = m204_CPS - Hg202_CPS * 0.2299
-    Pb84_raw = Pb208_CPS / Pb204 * mask
-    Pb74_raw = Pb207_CPS / Pb204 * mask
-    Pb64_raw = Pb206_CPS / Pb204 * mask
+    Pb204_raw = m204_CPS - Hg202_CPS * 0.2299
+    Pb84_raw = Pb208_CPS / Pb204_raw * mask
+    Pb74_raw = Pb207_CPS / Pb204_raw * mask
+    Pb64_raw = Pb206_CPS / Pb204_raw * mask
 
-    data.createTimeSeries("Pb204_CPS", data.Intermediate, indexChannel.time(), Pb204)
+    data.createTimeSeries("Pb204_raw", data.Intermediate, indexChannel.time(), Pb204_raw)
     data.createTimeSeries("raw 208Pb/204Pb", data.Intermediate, indexChannel.time(), Pb84_raw)
     data.createTimeSeries("raw 207Pb/204Pb", data.Intermediate, indexChannel.time(), Pb74_raw)
     data.createTimeSeries("raw 206Pb/204Pb", data.Intermediate, indexChannel.time(), Pb64_raw)
@@ -95,11 +95,16 @@ def runDRS():
     data.updateResults()
     StdSpline_PbF = data.spline(rmName, "Pb_f").data()
 
+    Hg204 = Hg202_CPS * 0.2301 / np.power((203.973481/201.970632), StdSpline_PbF)
+    Pb204_corr = m204_CPS - Hg204
+    data.createTimeSeries("Hg204", data.Intermediate, indexChannel.time(), Hg204)
+    data.createTimeSeries("Pb204_corr", data.Intermediate, indexChannel.time(), Pb204_corr)
+
     Pb86_corr = Pb86_raw * np.power((207.976627/205.97446), StdSpline_PbF)
     Pb76_corr = Pb76_raw * np.power((206.97589/205.97446), StdSpline_PbF)
-    Pb84_corr = Pb84_raw * np.power((207.976627/203.97304), StdSpline_PbF)
-    Pb74_corr = Pb74_raw * np.power((206.97589/203.97304), StdSpline_PbF)
-    Pb64_corr = Pb64_raw * np.power((205.97446/203.97304), StdSpline_PbF)
+    Pb84_corr = (Pb208_CPS / Pb204_corr) * np.power((207.976627/203.97304), StdSpline_PbF)
+    Pb74_corr = (Pb207_CPS / Pb204_corr) * np.power((206.97589/203.97304), StdSpline_PbF)
+    Pb64_corr = (Pb206_CPS / Pb204_corr) * np.power((205.97446/203.97304), StdSpline_PbF)
 
     data.createTimeSeries("Final 208Pb/206Pb", data.Output, indexChannel.time(), Pb86_corr)
     data.createTimeSeries("Final 207Pb/206Pb", data.Output, indexChannel.time(), Pb76_corr)
