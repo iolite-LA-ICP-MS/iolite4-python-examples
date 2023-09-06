@@ -256,7 +256,7 @@ def settingsWidget():
     else:
         rmComboBox.setCurrentText(rmNames[0])
         drs.setSetting('ReferenceMaterial', rmNames[0])
-    rmComboBox.setCurrentText(settings["ReferenceMaterial"])
+    
     rmComboBox.currentTextChanged.connect(
         lambda t: drs.setSetting("ReferenceMaterial", t))
     formLayout.addRow("Reference material", rmComboBox)
