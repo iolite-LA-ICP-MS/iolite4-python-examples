@@ -241,12 +241,12 @@ def runDRS():
 
 #########################
     try:
-        total88 = data.timeSeriesList(data.Intermediate, {'Mass': '88'})[0].data()
-        total87 = data.timeSeriesList(data.Intermediate, {'Mass': '87'})[0].data()
-        total86 = data.timeSeriesList(data.Intermediate, {'Mass': '86'})[0].data()
-        total85 = data.timeSeriesList(data.Intermediate, {'Mass': '85'})[0].data()
-        total84 = data.timeSeriesList(data.Intermediate, {'Mass': '84'})[0].data()
-    
+        total88 = data.timeSeriesByMass(data.Intermediate, 88.0, 0.1).data()
+        total87 = data.timeSeriesByMass(data.Intermediate, 87.0, 0.1).data()
+        total86 = data.timeSeriesByMass(data.Intermediate, 86.0, 0.1).data()
+        total85 = data.timeSeriesByMass(data.Intermediate, 85.0, 0.1).data()
+        total84 = data.timeSeriesByMass(data.Intermediate, 84.0, 0.1).data()
+
     except:
         IoLog.error("This DRS requires data for mass 88, 87, 86, 85, and 84 for the basic calculations.")
         drs.message("DRS did not finish. Please check Messages")
@@ -255,47 +255,47 @@ def runDRS():
         return
 
     try:
-        Y89 = data.timeSeriesList(data.Intermediate, {'Mass': '89'})[0].data()
+        Y89 = data.timeSeriesByMass(data.Intermediate, 89.0, 0.1).data()
     except:
         pass
 
     try:
-        total87_5 = data.timeSeriesList(data.Intermediate, {'Mass': '87.5'})[0].data()
+        total87_5 = data.timeSeriesByMass(data.Intermediate, 87.5, 0.1).data()
     except:
         pass
 
     try:
-        total86_5 = data.timeSeriesList(data.Intermediate, {'Mass': '86.5'})[0].data()
+        total86_5 = data.timeSeriesByMass(data.Intermediate, 86.5, 0.1).data()
     except:
         pass
 
     try:
-        total84_5 = data.timeSeriesList(data.Intermediate, {'Mass': '84.5'})[0].data()
+        total84_5 = data.timeSeriesByMass(data.Intermediate, 84.5, 0.1).data()
     except:
         pass
 
     try:
-        total83_5 = data.timeSeriesList(data.Intermediate, {'Mass': '83.5'})[0].data()
+        total83_5 = data.timeSeriesByMass(data.Intermediate, 83.5, 0.1).data()
     except:
         pass
 
     try:
-        total83 = data.timeSeriesList(data.Intermediate, {'Mass': '83'})[0].data()
+        total83 = data.timeSeriesByMass(data.Intermediate, 83., 0.1).data()
     except:
         pass
 
     try:
-        total82_5 = data.timeSeriesList(data.Intermediate, {'Mass': '82.5'})[0].data()
+        total82_5 = data.timeSeriesByMass(data.Intermediate, 82.5, 0.1).data()
     except:
         pass
 
     try:
-        total82 = data.timeSeriesList(data.Intermediate, {'Mass': '82'})[0].data()
-    except:  
+        total82 = data.timeSeriesByMass(data.Intermediate, 82., 0.1).data()
+    except:
         pass
 
     try:
-        total81_5 = data.timeSeriesList(data.Intermediate, {'Mass': '81.5'})[0].data()
+        total81_5 = data.timeSeriesByMass(data.Intermediate, 81.5, 0.1).data()
     except:
         pass  
 
@@ -857,11 +857,13 @@ def settingsWidget():
     data.dataChanged.connect(updateIndexCombo)
 
     rmComboBox = QtGui.QComboBox(widget)
-    rmNames = data.selectionGroupNames(data.ReferenceMaterial)
+    rmNames = data.referenceMaterialNames()
     rmComboBox.addItems(rmNames)
     if settings["ReferenceMaterial"] in rmNames:
         rmComboBox.setCurrentText(settings["ReferenceMaterial"])
-        drs.setSetting("ReferenceMaterial", settings["ReferenceMaterial"])
+    else:
+        rmComboBox.setCurrentText(rmNames[0])
+        drs.setSetting('ReferenceMaterial', rmNames[0])
 
     rmComboBox.textActivated.connect(lambda t: drs.setSetting("ReferenceMaterial", t))
     formLayout.addRow("Reference material", rmComboBox)
@@ -870,6 +872,7 @@ def settingsWidget():
         rmNames = data.selectionGroupNames(data.ReferenceMaterial)
         rmComboBox.clear()
         rmComboBox.addItems(rmNames)
+        drs.setSetting("ReferenceMaterial", rmComboBox.currentText())
 
     data.selectionGroupsChanged.connect(updateRMCombo)
 
