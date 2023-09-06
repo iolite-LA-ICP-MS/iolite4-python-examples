@@ -14,6 +14,7 @@ import numpy as np
 '''
 The following functions are for calculating associated results (i.e. error correlations)
 '''
+
 def Rb87_Sr87_Sr86_error_corr(sel):
     result = Result()
 
@@ -29,6 +30,7 @@ def Rb87_Sr87_Sr86_error_corr(sel):
 
     result.setValue(np.corrcoef(array_1, array_2)[0,1])
     return result
+
 
 def Rb87_Sr87_error_corr(sel):
     result = Result()
