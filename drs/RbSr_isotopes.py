@@ -15,6 +15,7 @@ import numpy as np
 The following functions are for calculating associated results (i.e. error correlations)
 '''
 
+
 def Rb87_Sr87_Sr86_error_corr(sel):
     result = Result()
 
@@ -204,7 +205,7 @@ def runDRS():
                           indexChannel.time(), StdCorr_Sr87s_Sr86s)
 
     # Register error correlations:
-    data.registerAssociatedResult("87Rb/86Sr - 87Rb/86Sr Rho", Rb87_Sr87_Sr86_error_corr)
+    data.registerAssociatedResult("87Rb/86Sr - 87Sr/86Sr Rho", Rb87_Sr87_Sr86_error_corr)
     data.registerAssociatedResult("87Sr/87Rb - 87Rb/86Sr Rho", Rb87_Sr87_error_corr)
 
     drs.message("Finished!")
