@@ -3,7 +3,7 @@
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: Trace elements with multiple reference materials
 #/ References: None
-#/ Version: 1.1
+#/ Version: 1.2
 #/ Contact: support@iolite-software.com
 
 """
@@ -52,7 +52,7 @@ import itertools
 import ast
 
 from datetime import datetime
-from math import sqrt, log, ceil
+from math import sqrt, log, ceil, pi as PI
 from functools import partial
 from types import SimpleNamespace
 from enum import Flag, auto
@@ -150,7 +150,7 @@ class Block(object):
         return self.hash() + ftz + model
 
     def midTime(self):
-        return np.mean([s.midTimestamp for s in self.selections])
+        return np.mean([s.midTimestamp if not s.isLinked() else s.linkedMidTimestamp() for s in self.selections])
 
     def dataFrame(self):
         if self.df is None or self.lastDFHash != self.hash():
@@ -180,6 +180,9 @@ class Block(object):
 
         stat_name = drs.setting('StatName')
         use_fg = drs.setting('UseFG')
+        use_isoConcs = drs.setting('UseIsotopicConcentrations')
+
+        print("Using isotopic concentrations? " + str(use_isoConcs))
 
         temp_df = data.frame(self.selections, ['UUID', 'group name', 'mid time', 'duration'], cpsChannels, [stat_name, 'int2se'])
 
@@ -210,11 +213,16 @@ class Block(object):
                     temp_df.loc[temp_df['group'] == group, name] /= norm
                     temp_df.loc[temp_df['group'] == group, f'{name}_Uncert'] /= norm
                     try:
-                        rmd = rmdata[channel.property('Element')]
-                        rmValue = rmd.valueInUnits('fg') if use_fg else rmdata[channel.property('Element')].valueInPPM()
+                        if use_isoConcs:
+                            rmd = rmdata[name.replace('_CPS', '')]
+                            rmValue = rmd.valueInPPM()
+                        else:
+                            rmd = rmdata[channel.property('Element')]
+                            rmValue = rmd.valueInUnits('fg') if use_fg else rmdata[channel.property('Element')].valueInPPM()
+
                         rmUncert = rmd.uncertainty()
                     except KeyError as e:
-                        print(f'There was no RM value for {e} for \'{group}\'')
+                        # print(f'There was no RM value for {e} for \'{group}\'')
                         continue
 
                     temp_df.loc[temp_df['group'] == group, f'{name}_RMppm'] = rmValue
@@ -280,7 +288,7 @@ class Block(object):
 
         if f'{channel.name}_RMppm' not in df.columns:
             print(f'{channel.name}_RMppm was not in df columns... ')
-            print(df.to_string())
+            # print(df.to_string())
             return bad_return
 
         if not df[f'{channel.name}_RMppm'].notna().values.any():
@@ -355,6 +363,7 @@ class Block(object):
         if not self.fit(name) is None:
             return self.fit(name)['slope']
         else:
+            print(f'No fit for {name} in block {self.label}')
             return None
 
     def slopeUncert(self, name):
@@ -381,16 +390,23 @@ def calculateRelativeYields():
     M.fill(np.nan)
 
     use_fg = drs.setting('UseFG')
+    use_isoConcs = drs.setting('UseIsotopicConcentrations')
 
     for col, groupName in enumerate(groupNames):
         group = data.selectionGroup(groupName)
         for row, channel in enumerate(cpsChannels):
             channelElement = channel.property('Element')
             try:
+                if use_isoConcs:
+                    groupRMValue = data.referenceMaterialData(groupName)[channel.name.replace("_CPS", "")].valueInPPM()
+                    masterGroupRMValue = data.referenceMaterialData(masterGroupName)[channel.name.replace("_CPS", "")].valueInPPM()
+
+                else: 
+                    groupRMValue = data.referenceMaterialData(groupName)[channelElement].valueInUnits('fg') if use_fg else data.referenceMaterialData(groupName)[channelElement].valueInPPM()
+                    masterGroupRMValue = data.referenceMaterialData(masterGroupName)[channelElement].valueInUnits('fg') if use_fg else data.referenceMaterialData(masterGroupName)[channelElement].valueInPPM()
+
                 groupResult = data.groupResult(group, channel).value()
-                groupRMValue = data.referenceMaterialData(groupName)[channelElement].valueInUnits('fg') if use_fg else data.referenceMaterialData(groupName)[channelElement].valueInPPM()
                 masterGroupResult = data.groupResult(masterGroup, channel).value()
-                masterGroupRMValue = data.referenceMaterialData(masterGroupName)[channelElement].valueInUnits('fg') if use_fg else data.referenceMaterialData(masterGroupName)[channelElement].valueInPPM()
                 M[row][col] = (groupResult/groupRMValue) / (masterGroupResult/masterGroupRMValue)
             except Exception as e:
                 pass
@@ -522,9 +538,14 @@ def findBlocks(method=None):
     # Now kick them out
     selections = list(filter(lambda s: s.property('UUID') not in component_sels, selections))
 
-    selections.sort(key=lambda s: s.midTimestamp)
+    def sel_sorter(sel):
+        if not sel.isLinked():
+            return sel.midTimestamp
+        else:
+            return sel.linkedMidTimestamp()
+
+    selections.sort(key=sel_sorter)
     selMidTimes = [s.midTimestamp if not s.isLinked() else s.linkedMidTimestamp() for s in selections]
-    selMidTimes.sort()
 
     def assignedBlock(s):
         if s.property('Block') is not None:
@@ -618,10 +639,13 @@ def fitSurface(blocks, channelName):
     cpsChannel = data.timeSeries(f'{channelName}_CPS')
     splineType = drs.setting('SplineType')
 
-    if len(slopes) < 2 and splineType != "MeanMean":
+    oneBlockTypes = ['MeanMean', 'MeanMedian']
+    lowBlockCountTypes = ['MeanMean', 'MeanMedian', 'LinearFit', 'WeightedLinearFit', 'StepLinear','StepForward', 'StepBackward', 'StepAverage', 'Nearest']
+
+    if len(slopes) < 2 and not splineType in oneBlockTypes:
         IoLog.information("Changing spline type to MeanMean due to fewer than 2 blocks found")
         splineType = 'MeanMean'
-    elif len(slopes) < 5 and splineType != "StepLinear":
+    elif len(slopes) < 5 and not splineType in lowBlockCountTypes:
         IoLog.information("Changing spline type to StepLinear due to fewer than 5 blocks found")
         splineType = 'StepLinear'
 
@@ -775,6 +799,7 @@ class Calibration(object):
         self.frac[name] = fdf
 
     def fitFractionation(self, name, isElements=None, td=None, k=None, group=None):
+        print("Fitting fractionation....")
         ft = data.timeSeries(name).property('FractionationFitType')
         fc = data.timeSeries(name).property('FractionationCorrection')
 
@@ -1089,40 +1114,47 @@ def runDRS():
     affIndex = data.createTimeSeriesFromMetadata('ExtAffinityIndex', 'External affinity')
 
     # Optionally apply a fractionation correction
-    #
-    # TODO: Should only do this if we have internal standards set, AND not sum normalisation... ?
-    #
-    if np.any([c.property('FractionationCorrection') for c in data.timeSeriesList(data.Input)]):
+
+    if np.any([c.property('FractionationCorrection') for c in data.timeSeriesList(data.Input)]) and settings['UseIntStds']:
         print('Attempting fractionation correction...')
         allSels = [[s for s in sg.selections()] for sg in data.selectionGroupList(data.ReferenceMaterial | data.Sample)]
         allSels = list(itertools.chain.from_iterable(allSels))
         allIS = [sel.property('Internal element') for sel in allSels]
         isElementsList = list(set(allIS))
-        isElementsList.sort()
 
-        params = {}
-        for c in [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]:
-            params[c.name] = cal.fractionation(c.name)
+        if None in isElementsList:
+            QMessageBox.warning(None, "Warning", "Some selections do not have an internal standard element set. Fractionation correction was not applied...")
 
-        bs = data.timeSeries('BeamSeconds').data()
-        isIndex = data.createTimeSeriesFromMetadata('ISElementIndex', 'Internal element')
+        elif np.any([ie.contains(',') for ie in isElementsList]):
+            QMessageBox.warning(None, "Warning", "Some selections have multiple internal standard elements set. Fractionation correction is not intended with multiple internal elements.")
+        
+        # Should be good to do fractionation correction now...
+        else:
+            isElementsList.sort()
 
-        for c in [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]:
-            fdf = params[c.name]
-            if len(fdf) == 0:
-                print(f'No frac for {c.name}')
-                continue
+            params = {}
+            for c in [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]:
+                params[c.name] = cal.fractionation(c.name)
 
-            for isi, ise in enumerate(isElementsList):
-                for gi, g in enumerate(externalsInUse):
-                    t, r, rsd, sp = cal.fitFractionation(c.name, ise, group=g)
-                    if not sp:
-                        continue
-                    ind = np.where( (isIndex.data() == isi) & (affIndex.data() == gi))[0]
-                    ppm = data.timeSeries(f'{c.name}_ppm')
-                    ppmd = ppm.data()
-                    ppmd[ind] = ppmd[ind]/(sp(bs[ind]))
-                    ppm.setData(ppmd)
+            bs = data.timeSeries('BeamSeconds').data()
+            isIndex = data.createTimeSeriesFromMetadata('ISElementIndex', 'Internal element')
+
+            for c in [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]:
+                fdf = params[c.name]
+                if len(fdf) == 0:
+                    print(f'No frac for {c.name}')
+                    continue
+
+                for isi, ise in enumerate(isElementsList):
+                    for gi, g in enumerate(externalsInUse):
+                        t, r, rsd, sp = cal.fitFractionation(c.name, ise, group=g)
+                        if not sp:
+                            continue
+                        ind = np.where( (isIndex.data() == isi) & (affIndex.data() == gi))[0]
+                        ppm = data.timeSeries(f'{c.name}_ppm')
+                        ppmd = ppm.data()
+                        ppmd[ind] = ppmd[ind]/(sp(bs[ind]))
+                        ppm.setData(ppmd)
 
     if False:
         # This is a bit of code for experimenting with forcing certain elements
@@ -1156,7 +1188,7 @@ def runDRS():
                 if spot_is_rect:
                     spot_area = spot_size*spot_size
                 else:
-                    spot_area = math.pi * (spot_size/2)**2
+                    spot_area = PI * (spot_size/2)**2
 
                 massChannel.data()[ind] = density*spot_area*thickness
             except Exception as e:
@@ -1172,7 +1204,6 @@ def runDRS():
 
     # Calculate FQ
     if bool(settings['UseIntStds']):
-
         if not np.any([bool(sel.property('Internal value')) for sel in sels]) and not np.any([sel.property('Internal element') == 'Criteria' for sel in sels]):
             IoLog.error("No internal standard values found. Have you set any?")
             drs.message.emit("DRS did not finish.")
@@ -1242,6 +1273,7 @@ def runDRS():
             else:
                 if not isvalue:
                     continue
+
                 sum = np.zeros(len(si))
                 for el in iselement.split(','):
                     if 'oxide' in isunit:
@@ -1256,9 +1288,29 @@ def runDRS():
                         f = 1
 
                     f *= 0.0001 if 'wtpc' in isunit else 1
-                    sum += data.timeSeries(f'{el}_ppm').data()[si]*f
+
+                    if np.isnan(f):
+                        print(f'Not including {el} in sum as it has a NaN f value.')
+                        continue
+
+                    try:
+                        ppmCh = data.timeSeries(f'{el}_ppm')
+                    except:
+                        print(f'There was an issue using {el} ppm channel as an internal standard and it has been skipped')
+                        continue
+
+                    if np.nanmedian(data.timeSeries(f'{el}_ppm').data()[si]*f) < 0 :
+                        print(f'\nNot including {el} in sum as it has a negative median concentration {np.nanmedian(data.timeSeries(f"{el}_ppm").data()[si])} over the course of selection {sel.name}.\n')
+                        continue
+
+                    try:
+                        sum += data.timeSeries(f'{el}_ppm').data()[si]*f
+                    except:
+                        print(f'There was an issue using {el} ppm channel as an internal standard and it has been skipped')
 
                 norm[si] = float(isvalue)/(sum)
+                if np.sum(sum) < 0:
+                    print(f'Negative sum for {sel.name}: {np.sum(sum)}')
 
         # Replace parts that end up inf with 1
         norm[np.abs(norm) == np.inf] = 1
@@ -1657,7 +1709,7 @@ class InternalsModel(QAbstractTableModel):
                 elif s.group().type == data.ReferenceMaterial:
                     sum = np.sum([data.referenceMaterialData(s.group().name)[e].valueInUnits(units) for e in elements if e in data.referenceMaterialData(s.group().name)])
             except:
-                sum = 0
+                sum = float(s.property('Internal value'))
 
             s.setProperty('Internal value', sum)
             self.dataChanged.emit(self.index(row, 0), self.index(row, self.columnCount()-1))
@@ -2319,7 +2371,18 @@ class BlockPlot(QWidget):
         except KeyError:
             pass
 
-        groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
+        try:
+            groups = [data.selectionGroup(ext) for ext in externalsInUse if ext]
+        except RuntimeError as e:
+            regex = r"requested group (.*) doesn't exist"
+            m = re.search(regex, str(e))
+            if m.group(1):
+                QMessageBox.information(self, 'Error getting Ref Mats', f'Please make sure that you have created a group for {m.group(1)} and that there are no spelling mistakes')
+                return
+            else:
+                QMessageBox.information(self, 'Error getting Ref Mats', 'Please make sure all reference material groups exist. Here is the error message: ' + str(e)) 
+                return
+            
         selections = list(itertools.chain(*[sg.selections() for sg in groups]))
 
         # Create a list of component selections
@@ -2465,6 +2528,17 @@ class BlockPlot(QWidget):
 
         # Make sure that the axes have the same extents for all blocks
         # Makes it easier to see differences
+        # First though, make sure we have some values for each block 
+        # otherwise we'll get an error when trying to find the max/min
+        # This might be caused by masking....
+        for b in self.settingsWidget.calibration.blocks:
+            if np.all(np.isnan(b.dataFrame()[f'{channel}'])):
+                QMessageBox.information(self, 'No valid values', f'No valid values for {channel} in block {b.label}. Please check the data for this block.')
+                print(f'No valid values for {channel} in block {b.label}')
+                self.plot.rescaleAxes()
+                self.plot.replot()
+                return
+        
         self.y_max = np.nanmax([np.nanmax(b.dataFrame()[f'{channel}']) for b in self.settingsWidget.calibration.blocks])
         self.y_min = np.nanmin([np.nanmin(b.dataFrame()[f'{channel}']) for b in self.settingsWidget.calibration.blocks])
 
@@ -2519,6 +2593,7 @@ class BlockPlot(QWidget):
 
             ss_res = np.sum( (df[channel] - (slope*df[f'{channel}_RMppm'] + intercept))**2 )
             ss_tot = np.sum( (df[channel] - np.mean(df[channel]))**2 )
+
             #Note, for modeled fits, the r_sq value will always be 1. This is a little misleading,
             # so will manually change this below, when the annotation is added to the plot
             r_sq = 1 - (ss_res / ss_tot) if len(df) > 1 else 1
@@ -3402,6 +3477,8 @@ class SettingsWidget(QWidget):
 
         drs.setSetting('AffinityCorrection', False)
 
+        drs.setSetting('UseIsotopicConcentrations', settings.value('UseIsotopicConcentrations', False))
+
         self.maskTrimSB.setMinimum(-1E5)
         self.maskTrimSB.setMaximum(1E5)
 
@@ -3911,8 +3988,23 @@ class SettingsWidget(QWidget):
             minInt = np.nanmin([block.intercept(channelName) for block in self.calibration.blocks])
             # cps = slope*ppm + intercept
             af, _ = calculateRelativeYields()
-            aff = 1./min(af.values()) # To compensate for low yield
-            maxppm = aff*np.nanmax( (cpsChannel.data() - minInt)/(minSlope) )
+            aff = 1./np.nanmin(np.fromiter(af.values(), dtype=float)) # To compensate for low yield
+            maxppm = aff * np.nanmax( (cpsChannel.data() - minInt) / (minSlope))
+            # For some reason I haven't figured out yet, the max ppm might be less than the max ppm of
+            # the highest ref mat. Check for that here...
+            # Should only affect display
+            rm_ppm = np.array([])
+            rm_ppm_uncert = np.array([])
+            for bi, block in enumerate(self.calibration.blocks):
+                df = block.dataFrameForChannel(channelName)
+                df = df[df[f'{channelName}_RMppm'] != 0]
+                rm_ppm = np.append(rm_ppm, df[f'{channelName}_RMppm'])
+                rm_ppm_uncert = np.append(rm_ppm_uncert, df[f'{channelName}_RMppm_Uncert'])
+
+            if len(rm_ppm) > 1:
+                max_rm_ppm = rm_ppm[np.nanargmax(rm_ppm)] + rm_ppm_uncert[np.nanargmax(rm_ppm)]
+                maxppm = max(maxppm, max_rm_ppm)
+
             x = np.linspace(cpsChannel.time().min(), cpsChannel.time().max(), n)
             y = np.linspace(0, maxppm, n)
             X,Y = np.meshgrid(x,y)
@@ -3920,7 +4012,10 @@ class SettingsWidget(QWidget):
             Z = Z.astype(np.float32)
             self.plot3d.setSurfaceData(Z)
             self.plot3d.setXTitle('Time')
-            self.plot3d.setYTitle('Concentration')
+            if drs.setting('UseFG'):
+                self.plot3d.setYTitle('Mass (fg)')
+            else:
+                self.plot3d.setYTitle('Concentration')
             self.plot3d.setZTitle('Intensity')
             for ax in ['X1', 'X2', 'X3', 'X4', 'Y1', 'Y2', 'Y3', 'Y4', 'Z1', 'Z2', 'Z3', 'Z4']:
                 self.plot3d.setTickLabels(ax, [0, 1], ['Min', 'Max'])
@@ -3960,7 +4055,7 @@ class SettingsWidget(QWidget):
 
         # Check that all channels have an element set so that it doesn't cause errors below
         for ch in data.timeSeriesList(data.Input):
-            if ch.name == 'TotalBeam' or ch.name == 'AllLight':
+            if ch.name == 'TotalBeam' or ch.name == 'AllLight' or ch.name == 'x [um]' or ch.name == 'y [um]':
                 continue
             if not ch.property('Element') or len(ch.property('Element')) < 1:
                 print(f"There was an issue with {ch.name}")
