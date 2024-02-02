@@ -182,7 +182,7 @@ class Block(object):
         use_fg = drs.setting('UseFG')
         use_isoConcs = drs.setting('UseIsotopicConcentrations')
 
-        print("Using isotopic concentrations? " + str(use_isoConcs))
+        print(f"Using isotopic concentrations? {use_isoConcs}")
 
         temp_df = data.frame(self.selections, ['UUID', 'group name', 'mid time', 'duration'], cpsChannels, [stat_name, 'int2se'])
 
@@ -1043,8 +1043,8 @@ def runDRS():
         totalPbChannel.setProperty('External standard', pb.property('External standard'))
         totalPbChannel.setProperty('FitThroughZero', pb.property('FitThroughZero'))
         totalPbChannel.setProperty('Model', pb.property('Model'))
-        if bool(pb.property('BaselineSubtracted')):
-            totalPbChannel.setProperty('BaselineSubtracted', pb.property('BaselineSubtracted'))
+        if bool(pb.property('BackgroundSubtracted')):
+            totalPbChannel.setProperty('BackgroundSubtracted', pb.property('BackgroundSubtracted'))
 
     # Baseline Subtraction
     if bl_required:
@@ -3477,7 +3477,11 @@ class SettingsWidget(QWidget):
 
         drs.setSetting('AffinityCorrection', False)
 
-        drs.setSetting('UseIsotopicConcentrations', settings.value('UseIsotopicConcentrations', False))
+        useIsotopicConcentrationsFromPrefs = settings.value('UseIsotopicConcentrations', False)
+        if isinstance(useIsotopicConcentrationsFromPrefs, str):
+            drs.setSetting('UseIsotopicConcentrations', useIsotopicConcentrationsFromPrefs.lower() == 'true')
+        else:
+            drs.setSetting('UseIsotopicConcentrations', useIsotopicConcentrationsFromPrefs)
 
         self.maskTrimSB.setMinimum(-1E5)
         self.maskTrimSB.setMaximum(1E5)
