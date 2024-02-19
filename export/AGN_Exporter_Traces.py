@@ -169,6 +169,7 @@ class SettingsWidget(QWidget):
                 self.duplicatesLabel.setStyleSheet('color: red')
                 print('Please select at least one duplicate channel.')
                 return
+            self.continueButton.setText("Exporting...")
             self.exportData()
             return
         self.stackedWidget.setCurrentIndex(current_index+1)
@@ -221,8 +222,6 @@ class SettingsWidget(QWidget):
 
                 colNo += 1
 
-        print(f'col_dict: {col_dict}')
-
         # Get list of groups to export and their type
         groups_to_export = []
         for row in range(self.groupsTable.rowCount):
@@ -243,7 +242,10 @@ class SettingsWidget(QWidget):
                 datap_ws.cell(groupCounter, 3, value=group.name)
             
             datap_ws.cell(groupCounter, 5, value = self.techniqueComboBox.currentText)
-            datap_ws.cell(groupCounter, 6, value = data.sessionFilePath())
+            if self.sessionIDComboBox.currentText == 'File Path':
+                datap_ws.cell(groupCounter, 6, value = data.sessionFilePath())
+            else:
+                datap_ws.cell(groupCounter, 6, value = self.sessionIDComboBox.currentText)
             datap_ws.cell(groupCounter, 9, value = self.scaleComboBox.currentText)
             datap_ws.cell(groupCounter, 12, value = self.uncertTypeComboBox.currentText)
             datap_ws.cell(groupCounter, 15, value = self.userComboBox.currentText)
