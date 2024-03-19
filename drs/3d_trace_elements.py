@@ -381,7 +381,12 @@ def calculateRelativeYields():
     masterGroupName = drs.setting('MasterExternal')
     if not masterGroupName:
         masterGroupName = groupNames[0]
-    masterGroup = data.selectionGroup(masterGroupName)
+
+    try:
+        masterGroup = data.selectionGroup(masterGroupName)
+    except Exception as e:
+        print(f'Could not find master group {masterGroupName} for relative yield calculation')
+        return None, None
 
     cpsChannelNames = [n for n in data.timeSeriesNames(data.Intermediate, {'DRSType': 'BaselineSubtracted'}) if 'TotalBeam' not in n]
     cpsChannels = [data.timeSeries(c) for c in cpsChannelNames]
@@ -1124,10 +1129,6 @@ def runDRS():
 
         if None in isElementsList:
             QMessageBox.warning(None, "Warning", "Some selections do not have an internal standard element set. Fractionation correction was not applied...")
-
-        elif np.any([ie.contains(',') for ie in isElementsList]):
-            QMessageBox.warning(None, "Warning", "Some selections have multiple internal standard elements set. Fractionation correction is not intended with multiple internal elements.")
-        
         # Should be good to do fractionation correction now...
         else:
             isElementsList.sort()
@@ -3992,7 +3993,9 @@ class SettingsWidget(QWidget):
             minInt = np.nanmin([block.intercept(channelName) for block in self.calibration.blocks])
             # cps = slope*ppm + intercept
             af, _ = calculateRelativeYields()
-            aff = 1./np.nanmin(np.fromiter(af.values(), dtype=float)) # To compensate for low yield
+            aff = 1.0
+            if af is not None:
+                aff = 1./np.nanmin(np.fromiter(af.values(), dtype=float)) # To compensate for low yield
             maxppm = aff * np.nanmax( (cpsChannel.data() - minInt) / (minSlope))
             # For some reason I haven't figured out yet, the max ppm might be less than the max ppm of
             # the highest ref mat. Check for that here...
@@ -4246,6 +4249,14 @@ class SettingsWidget(QWidget):
 
         res = data.importISValues(fileName)
         print(res)
+
+        elements = res['elements']
+        selsChanged = res['selsChanged']
+        missedNames = res['missedNames']
+
+        if selsChanged > 0 and len(elements) > 0:
+            QMessageBox.information(self, "Internal standards", f'Internal standard data were imported for {selsChanged} selections and {len(elements)} elements.\n\nCould not match IS values for {len(missedNames)} selections', QMessageBox.Ok)
+            self.intModel.updateData(self.intModel.selections)
 
 
 
