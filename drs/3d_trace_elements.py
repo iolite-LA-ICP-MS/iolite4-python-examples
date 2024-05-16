@@ -182,7 +182,7 @@ class Block(object):
         use_fg = drs.setting('UseFG')
         use_isoConcs = drs.setting('UseIsotopicConcentrations')
 
-        print(f"Using isotopic concentrations? {use_isoConcs}")
+        #print(f"Using isotopic concentrations? {use_isoConcs}")
 
         temp_df = data.frame(self.selections, ['UUID', 'group name', 'mid time', 'duration'], cpsChannels, [stat_name, 'int2se'])
 
@@ -298,7 +298,12 @@ class Block(object):
         df = df.dropna()
         func = lineartz if fitThroughZero or len(df['group'].unique()) == 1 else linear
         if len(df['group'].unique()) == 1:
-            slope = df[name].mean()/df[f'{name}_RMppm'].mean()
+            try:
+                slope = df[name].mean()/df[f'{name}_RMppm'].mean()
+            except ZeroDivisionError:
+                print(f'Replaced slope with 0 for {name} due to a ZeroDivisionError')
+                slope = 0.
+
             try:
                 slope_uncert = (df[name].mean()/df[f'{name}_RMppm'].mean())*(df[f'{name}_Uncert'].mean()/df[name].mean())
             except ZeroDivisionError:
@@ -443,14 +448,14 @@ def assignExternalAffinities(sels=None):
     isElements = list(set([s.property('Internal element') for s in sels]))
     affinityElements = list(set([s.property('Affinity elements') for s in sels]))
 
-    print(f'assignExternalAffinities with {isElements} {affinityElements}')
+    #print(f'assignExternalAffinities with {isElements} {affinityElements}')
 
     if len(isElements) == 0 or len(affinityElements) == 0:
         print('Could not update external affinities for selections...')
         return externalsInUse
 
     combinations = list(itertools.product(isElements, affinityElements))
-    print(f'Combinations are {combinations}')
+    #print(f'Combinations are {combinations}')
 
     def sumForSelection(sel, channels):
         n = len(data.timeSeries(channels[0]).dataForSelection(sel))
@@ -462,7 +467,7 @@ def assignExternalAffinities(sels=None):
 
     aff = {}
     for comb in combinations:
-        print(comb)
+        #print(comb)
         ise = comb[0]
         afe = comb[1]
         if not ise or not afe or afe in externalsInUse:
@@ -602,7 +607,7 @@ def findBlocks(method=None):
 
     block_selections = {}
 
-    print(f'Used method = {method}, got labels = {labels}')
+    #print(f'Used method = {method}, got labels = {labels}')
     specified = [si for si, s in enumerate(selections) if s.property('Block') is not None]
     for k in np.unique(labels):
         matches = np.where(np.array(labels).astype(int) == k)[0]
@@ -684,7 +689,9 @@ def fitSurface(blocks, channelName):
             # I = m*c + b, so c = (I - b)/m
             return (I - b)/m
         else:
-            return (I - intercept_spl)/slope_spl
+            r = (I - intercept_spl)/slope_spl
+            r[np.isinf(r)] = np.nan
+            return r
 
     return surface, surfaceInv
 
@@ -804,7 +811,7 @@ class Calibration(object):
         self.frac[name] = fdf
 
     def fitFractionation(self, name, isElements=None, td=None, k=None, group=None):
-        print("Fitting fractionation....")
+        #print("Fitting fractionation....")
         ft = data.timeSeries(name).property('FractionationFitType')
         fc = data.timeSeries(name).property('FractionationCorrection')
 
@@ -1083,6 +1090,10 @@ def runDRS():
         if 'TotalBeam' in input.name:
             continue
 
+        if input.property('External standard') == '':
+            print(f'No external standard for {input.name}')
+            continue
+
         drs.progress.emit(25 + 25*float(ii)/len(data.timeSeriesList(data.Input)))
         drs.message.emit(f'Applying surface for {input.name}')
 
@@ -1332,6 +1343,7 @@ def runDRS():
     # This bit of code uses the residual of its nearest RM to apply an additional correction
     # Todo: make it configurable
     use_fg = drs.setting('UseFG')
+    aff_on = float(drs.setting('AffinityCorrection%'))/100.0
 
     if drs.setting('AffinityCorrection'):
         drs.message.emit('Doing affinity correction')
@@ -1344,15 +1356,15 @@ def runDRS():
                     rm = data.referenceMaterialData(ext)[ppmc.property('Element')].valueInUnits('fg') if use_fg else data.referenceMaterialData(ext)[ppmc.property('Element')].valueInPPM()
                     meas = data.groupResult(data.selectionGroup(ext), ppmc).value()
                     extFactors[ext][ppmc.name] = meas/rm
-                    if abs(extFactors[ext][ppmc.name]-1) > 0.15:
+                    if abs(extFactors[ext][ppmc.name]-1) > aff_on:
                         print(f'Not going to correct {ppmc.name} for {ext} due to' \
-                        'its large relative difference from the accepted value: ' \
+                        ' its large relative difference from the accepted value: ' \
                         f'{abs(extFactors[ext][ppmc.name]-1):.2f}')
                         extFactors[ext][ppmc.name] = 1.
                         continue
                     else:
                         print(f'Will apply an affinity correction ' \
-                              f'of {extFactors[ext][ppmc.name] * 100.:.2f}% for {ppmc.name}')
+                              f'of {extFactors[ext][ppmc.name] * 100.:.2f}% for {ppmc.name} on groups related to {ext}')
                 except Exception as e:
                     print(e)
 
@@ -1367,9 +1379,10 @@ def runDRS():
                     f = extFactors[sel.property('External affinity')][ppmc.name]
                     ind = ppmc.selectionIndices(sel)
                     d[ind] =  d[ind]/f
+                    ppmc.setData(d)
                 except Exception as e:
-                    print(e)
-                ppmc.setData(d)
+                    pass
+                    #print(e)
 
     data.updateResults()
 
@@ -3428,6 +3441,7 @@ class SettingsWidget(QWidget):
         self.bsFrame = ui.findChild(QFrame, 'bsFrame')
         self.affinityButton = ui.findChild(QToolButton, 'affinityButton')
         self.affinityCorrectionCheckBox = ui.findChild(QCheckBox, 'affinityCorrectionCheckBox')
+        self.affinityCorrectionSpinBox = ui.findChild(QDoubleSpinBox, 'affinityCorrectionSpinBox')
 
         self.throughZeroButton.setIcon(CUI().icon('bullseye'))
         self.throughZeroButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -3471,12 +3485,11 @@ class SettingsWidget(QWidget):
         drs.setDefaultSetting('BeamSecondsChannel', defaultChannelName)
         drs.setDefaultSetting('BeamSecondsValue', 1000.)
         drs.setDefaultSetting('AffinityCorrection', False)
+        drs.setDefaultSetting('AffinityCorrection%', 15.0)
         drs.setDefaultSetting('BlockFindingMethod', 'Simple')
         drs.setDefaultSetting('NClusters', -1)
         drs.setDefaultSetting('ISCriteria', [])
         drs.setDefaultSetting('UseIonizationEnergies', False)
-
-        drs.setSetting('AffinityCorrection', False)
 
         useIsotopicConcentrationsFromPrefs = settings.value('UseIsotopicConcentrations', False)
         if isinstance(useIsotopicConcentrationsFromPrefs, str):
@@ -3516,6 +3529,7 @@ class SettingsWidget(QWidget):
         self.bsLineEdit.setText(drs.setting('BeamSecondsValue'))
         self.bsFrame.setVisible('log' not in drs.setting('BeamSecondsMethod').lower())
         self.affinityCorrectionCheckBox.setChecked(drs.setting('AffinityCorrection'))
+        self.affinityCorrectionSpinBox.setValue(drs.setting('AffinityCorrection%'))
         self.statComboBox.currentText = drs.setting('StatName')
         self.fgButton.setChecked(drs.setting('UseFG'))
         self.setupGroupPropsButton.setVisible(drs.setting('UseFG'))
@@ -3841,11 +3855,17 @@ class SettingsWidget(QWidget):
         self.affinityMenu.channelsChanged.connect(self.intModel.updateData)
         self.affinityButton.clicked.connect(lambda: self.intModel.refreshSelections())
         self.affinityCorrectionCheckBox.clicked.connect(lambda b: drs.setSetting('AffinityCorrection', b))
+        self.affinityCorrectionSpinBox.valueChanged.connect(lambda v: drs.setSetting('AffinityCorrection%', v))
 
-        affRMMenu = QMenu('Reference materials', self)
+        affRMMenu = QMenu('Externals in use', self)
         self.affinityMenu.addMenu(affRMMenu)
-        for rm in data.referenceMaterialNames():
-            affRMMenu.addAction(rm)
+
+        def updateAffRMMenu():
+            print('Updating affinities menu...')
+            affRMMenu.clear()
+            for rm in self.externalsInUse():
+                affRMMenu.addAction(rm)
+        affRMMenu.aboutToShow.connect(updateAffRMMenu)
         affRMMenu.triggered.connect(lambda a: self.setAffinitiesToMaterial(a.text))
 
         self.unitsMenu = QMenu(self)
@@ -4338,6 +4358,7 @@ class PTSettingsWidget(QWidget):
         drs.setDefaultSetting('BeamSecondsChannel', '')
         drs.setDefaultSetting('BeamSecondsValue', 1000.)
         drs.setDefaultSetting('AffinityCorrection', False)
+        drs.setDefaultSetting('AffinityCorrection%', 15.0)
         drs.setDefaultSetting('BlockFindingMethod', 'Simple')
         drs.setDefaultSetting('NClusters', -1)
         drs.setDefaultSetting('PreserveISProperties', False)
@@ -4396,6 +4417,7 @@ class PTSettingsWidget(QWidget):
         self.bsValueLineEdit = ui.findChild(QLineEdit, 'bsValueLineEdit')
         self.bsValueLabel = ui.findChild(QLabel, 'bsValueLabel')
         self.affinityCheckBox = ui.findChild(QCheckBox, 'affinityCheckBox')
+        self.affinitySpinBox = ui.findChild(QDoubleSpinBox, 'affinitySpinBox')
         self.criteriaButton = ui.findChild(QToolButton, 'criteriaButton')
         self.preserveISCheckBox = ui.findChild(QCheckBox, 'preserveISCheckBox')
         self.fgButton = ui.findChild(QToolButton, 'fgButton')
@@ -4485,6 +4507,7 @@ class PTSettingsWidget(QWidget):
         self.splineComboBox.textActivated.connect(lambda t: drs.setSetting('SplineType', t))
         self.bsMethodComboBox.textActivated.connect(lambda t: drs.setSetting('BeamSecondsMethod', t))
         self.affinityCheckBox.toggled.connect(lambda b: drs.setSetting('AffinityCorrection', b))
+        self.affinitySpinBox.valueChanged.connect(lambda v: drs.setSetting('AffinityCorrection%', v))
         self.indexLineEdit.textEdited.connect(lambda t: drs.setSetting('IndexChannel', t))
         self.intGroupBox.toggled.connect(lambda b: drs.setSetting('UseIntStds', b))
         self.extTable.itemChanged.connect(self.updateExtInfo)
