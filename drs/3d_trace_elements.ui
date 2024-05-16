@@ -672,6 +672,28 @@ You will also need to configure group thicknesses and densities.</string>
           </property>
          </widget>
         </item>
+        <item>
+         <widget class="QDoubleSpinBox" name="affinityCorrectionSpinBox">
+          <property name="toolTip">
+           <string>Maximum percent difference to correct</string>
+          </property>
+          <property name="suffix">
+           <string>%</string>
+          </property>
+          <property name="decimals">
+           <number>0</number>
+          </property>
+          <property name="maximum">
+           <double>100.000000000000000</double>
+          </property>
+          <property name="singleStep">
+           <double>5.000000000000000</double>
+          </property>
+          <property name="value">
+           <double>15.000000000000000</double>
+          </property>
+         </widget>
+        </item>
        </layout>
       </widget>
      </item>
