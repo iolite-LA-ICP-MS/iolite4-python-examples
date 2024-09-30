@@ -204,6 +204,15 @@ class Block(object):
 
         groups = temp_df['group'].unique()
 
+        def uncertToUse(rmValue, rmUncert):
+            if rmUncert > 0:
+                return rmUncert
+
+            if rmValue > 0:
+                return rmValue*0.02
+
+            return 1e-6
+
         for group in groups:
             norm = ryields[group] if drs.setting('NormalizeExternals') else 1
             rmdata = data.referenceMaterialData(group)
@@ -226,7 +235,8 @@ class Block(object):
                         continue
 
                     temp_df.loc[temp_df['group'] == group, f'{name}_RMppm'] = rmValue
-                    temp_df.loc[temp_df['group'] == group, f'{name}_RMppm_Uncert'] = rmUncert if rmUncert else rmValue*0.02
+                    temp_df.loc[temp_df['group'] == group, f'{name}_RMppm_Uncert'] = uncertToUse(rmValue, rmUncert)
+
                 except Exception as e:
                     print(f'DataFrame Creation Exception: {e}')
                     continue
@@ -1117,7 +1127,8 @@ def runDRS():
             'Mass': input.property('Mass'),
             'Reference Material': input.property('External standard'),
             'Reference Material uncertainty': cal.uncertainty(input.name), # This needs some thinking....
-            'Units': 'µg.g-1'
+            'Units': 'µg.g-1',
+            'AssociatedInputChannel': input.name
         }
 
         data.createTimeSeries(f'{input.name}_ppm', data.Output, indexChannel.time(), ppm, props)
@@ -1411,6 +1422,26 @@ def runDRS():
     #badSelsString = ', '.join([s.name for s in badSels])
     #badSelsString = badSelsString if len(badSelsString) < 25 else badSelsString[0:23]+'...'
     #IoLog.warning(f'There was a problem calculating the sensitivity of {badChannelsString} for selection(s) {badSelsString}')
+
+    # Convert ppm output channel to wtpc if user has set this setting
+    if QSettings().value('ConvertPPMtoWtPCOutputChannels', False):
+        for ch in data.timeSeriesList(data.Output):
+            element = ch.property('Element')
+            groupNames = data.selectionGroupNames(data.ReferenceMaterial)
+            masterGroupName = drs.setting('MasterExternal')
+            if not masterGroupName:
+                print(f'Please set a master external RM to calculate Wt% output channels')
+                break
+
+            try:
+                res = data.referenceMaterialData(masterGroupName)[element]
+                if res.units() == 'wtpc':
+                    print('Converting ' + ch.name + ' from ppm to wtpc...')
+                    ch.setData(ch.data() / 10000.0)
+                    ch.name = ch.name.replace('ppm', 'wtpc')
+                    ch.setProperty('Units', 'wtpc')
+            except:
+                continue
 
     # Need to update results again to get LODs calculated
     data.updateResults()
