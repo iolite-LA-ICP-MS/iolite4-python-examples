@@ -15,6 +15,36 @@ from scipy.optimize import curve_fit, leastsq
 
 def downholeFunc(t, a, b, c, d):
 	return a + b*t + c*np.exp(-d * t)
+'''
+The following functions are for calculating associated results (i.e. error correlations)
+'''
+
+
+def Sm147_Nd143_Nd144_error_corr(sel):
+    result = Result()
+
+    try:
+        StdCorr_Nd143_144 = data.timeSeries("StdCorr_Nd143_144")
+        Final Sm147/Nd144 = data.timeSeries("Final Sm147/Nd144")
+    except RuntimeError as e:
+        print(e)
+        return result
+
+    array_1 = StdCorr_Nd143_144.dataForSelection(sel)
+    array_2 = Final Sm147/Nd144.dataForSelection(sel)
+
+    result.setValue(np.corrcoef(array_1, array_2)[0,1])
+    return result
+
+    except RuntimeError as e:
+        print(e)
+        return result
+
+    array_1 = Sr87s_Rb87_Raw.dataForSelection(sel)
+    array_2 = StdCorr_Rb87_Sr86s.dataForSelection(sel)
+
+    result.setValue(np.corrcoef(array_1, array_2)[0,1])
+    return result
 
 def runDRS():
 
@@ -219,6 +249,9 @@ def runDRS():
 		groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
 		data.propagateErrors(groups, [data.timeSeries("StdCorr_Nd143_144")], data.timeSeries("Nd143_144_Corr"), rmName)
 		data.propagateErrors(groups, [data.timeSeries("Final Sm147/Nd144")], data.timeSeries("DC Sm147/Nd144"), rmName)
+# Register error correlations:
+    	data.registerAssociatedResult("Sm147 / Nd144 - Nd143 / Nd144 - 87Sr/86Sr Rho", Sm147_Nd143_Nd144_error_corr)
+   	
 
 	drs.message("Finished!")
 	drs.progress(100)
