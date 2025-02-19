@@ -22,8 +22,13 @@ k = 137.818
 lut = np.logspace(0, 23, 1000, base=2.7)
 lu76 = (1/k)*(np.exp(l235*lut) - 1)/(np.exp(l238*lut) - 1)
 
+def downholeFunc_Lin(t, a, b):
+    return a + b*t
 
-def downholeFunc(t, a, b, c, d):
+def downholeFunc_Exp(t, a, b, c):
+    return a + b*np.exp(-c * t)
+
+def downholeFunc_Exp_Lin(t, a, b, c, d):
     return a + b*t + c*np.exp(-d * t)
 
 
@@ -77,7 +82,7 @@ def runDRS():
 
     ratios = [
         {
-            'data': lambda: data.timeSeries('Pb206').data()/data.timeSeries('U238').data(),
+            'data': lambda: data.timeSeries('Pb206_CPS').data()/data.timeSeries('U238_CPS').data(),
             'dhfc': True,
             'age': age638,
             'name': 'Pb206/U238',
@@ -85,7 +90,7 @@ def runDRS():
             'plotName': 'Plot68'  
         },
         {
-            'data': lambda: k*data.timeSeries('Pb207').data()/data.timeSeries('U238').data(),
+            'data': lambda: k*data.timeSeries('Pb207_CPS').data()/data.timeSeries('U238_CPS').data(),
             'dhfc': True,
             'age': age735,
             'name': 'Pb207/U235',
@@ -93,7 +98,7 @@ def runDRS():
             'plotName': 'Plot75'
         },
         {
-            'data': lambda: data.timeSeries('Pb208').data()/data.timeSeries('Th232').data(),
+            'data': lambda: data.timeSeries('Pb208_CPS').data()/data.timeSeries('Th232_CPS').data(),
             'dhfc': True,
             'age': age832,
             'name': 'Pb208/Th232',
@@ -101,7 +106,7 @@ def runDRS():
             'plotName': 'Plot82'
         },
         {
-            'data': lambda: data.timeSeries('Pb207').data()/data.timeSeries('Pb206').data(),
+            'data': lambda: data.timeSeries('Pb207_CPS').data()/data.timeSeries('Pb206_CPS').data(),
             'dhfc': False,
             'age': age76,
             'name': 'Pb207/Pb206',
@@ -122,7 +127,7 @@ def runDRS():
         ratioToCalibrateName = ratio['name']
 
         if ratio['dhfc']:
-            print('... doing down-hole correction')
+            print(f'... doing down-hole correction for {ratio["name"]}')
             DHF = data.compileDownhole(data.selectionGroup(settings['ReferenceMaterial']), ts)
             DHFnans = np.isnan(DHF[1])
             DHFt = DHF[0][~DHFnans]
@@ -136,8 +141,34 @@ def runDRS():
                 DHFt = DHFt[:-endTrimIndex]
                 DHFr = DHFr[:-endTrimIndex]
             
-            params, cov = curve_fit(downholeFunc, DHFt, DHFr, ftol=1e-5)
-            dc = rawRatio/(1 + (params[1]/params[0])*beamSeconds + (params[2]/params[0])*np.exp(-params[3]*beamSeconds))
+            print('... fitting down-hole function')
+            print(f'... fit model: {settings["Model"]}')
+            try:
+                if settings['Model'] == 'Linear':
+                    params, cov = curve_fit(downholeFunc_Lin, DHFt, DHFr, ftol=1e-5, maxfev = 3000)
+                elif settings['Model'] == 'Exponential':
+                    params, cov = curve_fit(downholeFunc_Exp, DHFt, DHFr, ftol=1e-5, maxfev = 3000)
+                elif settings['Model'] == 'Exponential + Linear':
+                    params, cov = curve_fit(downholeFunc_Exp_Lin, DHFt, DHFr, ftol=1e-5, maxfev = 3000)
+            except RuntimeError as err:
+                raise RuntimeError(f'Could not fit down-hole function: {err}')
+
+            #print(f'... fit parameters: {params}')
+            #print(f'... covariance: {cov}')
+            param_name_list = ['a', 'b', 'c', 'd']
+            uncertainties_list = []
+            for i, param in enumerate(params):
+                sigma = np.sqrt(cov[i, i])
+                uncertainties_list.append(f'{param_name_list[i]}: {param} +/- {sigma:.4e} ({sigma/param:.4%})')
+                print(f'... {param_name_list[i]}: {param} +/- {sigma:.4e} ({sigma/param:.4%})')
+
+            if settings['Model'] == 'Linear':
+                dc = rawRatio / (1 + (params[0] / params[1]) * beamSeconds)
+            elif settings['Model'] == 'Exponential':
+                dc = rawRatio / (1 + (params[1] / params[0]) * np.exp(-params[2] * beamSeconds))
+            elif settings['Model'] == 'Exponential + Linear':
+                dc = rawRatio / (1 + (params[1] / params[0]) * beamSeconds + (params[2] / params[0]) * np.exp(-params[3] * beamSeconds))
+
             data.createTimeSeries('DC '+ratio['name'], data.Intermediate, indexChannel.time(), dc, commonProps)
 
             plot = Plot(settings['FitsWidget'])
@@ -145,7 +176,16 @@ def runDRS():
             g.setData(DHFt, DHFr)
             g2 = plot.addGraph()
             g2.setColor(QColor(255, 0, 0))
-            g2.setData(DHFt, downholeFunc(DHFt, params[0], params[1], params[2], params[3]))
+
+            if settings['Model'] == 'Linear':
+                g2.setData(DHFt, downholeFunc_Lin(DHFt, params[0], params[1]))
+            elif settings['Model'] == 'Exponential':
+                g2.setData(DHFt, downholeFunc_Exp(DHFt, params[0], params[1], params[2]))
+            elif settings['Model'] == 'Exponential + Linear':
+                g2.setData(DHFt, downholeFunc_Exp_Lin(DHFt, params[0], params[1], params[2], params[3]))
+            
+            # TODO: Add uncertainties to plot as text
+            
             plot.left().label = ratio['name']
             plot.bottom().label = 'Time (s)'
             plot.setToolsVisible(False)
@@ -185,21 +225,37 @@ def settingsWidget():
     formLayout.setFormAlignment(Qt.AlignHCenter | Qt.AlignTop)
     widget.setLayout(formLayout)
 
+    # Some default settings
+    drs.setSetting("ReferenceMaterial", "Z_91500")
+    drs.setSetting("Model", "Linear")
+    drs.setSetting("StartTrim", 0)
+    drs.setSetting("EndTrim", 0)
+
     rmComboBox = QtGui.QComboBox(widget)
     rmComboBox.setFixedWidth(150)
     rmComboBox.addItems(data.referenceMaterialNames())
+    rmComboBox.setCurrentText(drs.setting("ReferenceMaterial"))
     rmComboBox.currentTextChanged.connect(lambda s: drs.setSetting("ReferenceMaterial", str(s)))
     formLayout.addRow("Reference material", rmComboBox)
 
+    modelComboBox = QtGui.QComboBox(widget)
+    modelComboBox.setFixedWidth(150)
+    modelComboBox.addItems([ 'Linear', 'Exponential', 'Exponential + Linear'])
+    modelComboBox.setCurrentText(drs.setting("Model"))
+    modelComboBox.currentTextChanged.connect(lambda s: drs.setSetting("Model", str(s)))
+    formLayout.addRow("Fit Model", modelComboBox)
+
     startLineEdit = QtGui.QLineEdit(widget)
     startLineEdit.setFixedWidth(150)
-    formLayout.addRow("Start trim (s)", startLineEdit)
+    startLineEdit.setText(str(drs.setting("StartTrim")))
     startLineEdit.textEdited.connect(lambda s: drs.setSetting("StartTrim", float(s)))
+    formLayout.addRow("Start trim (s)", startLineEdit)
 
     endLineEdit = QtGui.QLineEdit(widget)
     endLineEdit.setFixedWidth(150)
-    formLayout.addRow("End trim (s)", endLineEdit)
+    endLineEdit.setText(str(drs.setting("EndTrim")))
     endLineEdit.textEdited.connect(lambda s: drs.setSetting("EndTrim", float(s)))
+    formLayout.addRow("End trim (s)", endLineEdit)
     
     tabWidget = QtGui.QTabWidget(widget)
     tabWidget.setFixedSize(500,400)
