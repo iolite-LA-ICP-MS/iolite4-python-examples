@@ -52,7 +52,7 @@ import itertools
 import ast
 
 from datetime import datetime
-from math import sqrt, log, ceil, pi as PI
+from math import sqrt, log10, ceil, pi as PI
 from functools import partial
 from types import SimpleNamespace
 from enum import Flag, auto
@@ -765,7 +765,13 @@ class Calibration(object):
             self.frac[name] = pd.DataFrame()
             return
 
-        groups = [data.selectionGroup(ext) for ext in externals]
+        try:
+            groups = [data.selectionGroup(ext) for ext in externals]
+        except RuntimeError:
+            print(f'Could not find external group for fractionation calculation for {name}')
+            self.frac[name] = pd.DataFrame()
+            return
+
         cpsChannel = data.timeSeries(f'{name}_CPS')
 
         try:
@@ -1093,7 +1099,23 @@ def runDRS():
     drs.message.emit('Finding blocks')
     drs.progress.emit(23)
     cal = Calibration()
-    cal.updateBlocks()
+    # the user may have selected an external that doesn't exist. If so, it will raise a RuntimeError.
+    try:
+        cal.updateBlocks()
+    except MissingRMGroupError:
+        # Find which RM is missing:
+        externalsInUse = set(list(itertools.chain(*[c.property('External standard').split(',') for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name and type(c.property('External standard')) == str])))
+        if "Model" in externalsInUse:
+            externalsInUse.remove("Model")
+        for ext in externalsInUse:
+            try:
+                data.selectionGroup(ext)
+            except RuntimeError:
+                IoLog.error(f"External standard {ext} is set but no selections are made for it.")
+                drs.message.emit("DRS did not finish.")
+                drs.progress.emit(100)
+                drs.finished.emit()
+                return
 
     # Calculate SQ channels
     for ii, input in enumerate(data.timeSeriesList(data.Input)):
@@ -1425,21 +1447,38 @@ def runDRS():
 
     # Convert ppm output channel to wtpc if user has set this setting
     if QSettings().value('ConvertPPMtoWtPCOutputChannels', False):
+        # We want to convert to wtpc if:
+        # Using a master external + the maser is in wtpc, or
+        # Not using a master extrnal but all of the RMs in use are in wtpc.
+
+        def allInWtpc(channel):
+            channelProperties = channel.properties()
+            if not 'Reference Material' in channelProperties or not 'Element' in channelProperties:
+                return False
+
+            element = channelProperties['Element']
+            rms = channelProperties['Reference Material'].split(',')
+            return all([element in data.referenceMaterialData(rm) and data.referenceMaterialData(rm)[element].units() == 'wtpc' for rm in rms])
+
+        def convertChannelToWtpc(channel):
+            print('Converting ' + ch.name + ' from ppm to wtpc...')
+            ch.setData(ch.data() / 10000.0)
+            ch.name = ch.name.replace('ppm', 'wtpc')
+            ch.setProperty('Units', 'wtpc')
+
+        masterGroupName = drs.setting('MasterExternal')
+        normalizeExternals = drs.setting('NormalizeExternals')
+
         for ch in data.timeSeriesList(data.Output):
-            element = ch.property('Element')
-            groupNames = data.selectionGroupNames(data.ReferenceMaterial)
-            masterGroupName = drs.setting('MasterExternal')
-            if not masterGroupName:
-                print(f'Please set a master external RM to calculate Wt% output channels')
-                break
+            if allInWtpc(ch):
+                convertChannelToWtpc(ch)
+                continue
 
             try:
+                element = ch.property('Element')
                 res = data.referenceMaterialData(masterGroupName)[element]
                 if res.units() == 'wtpc':
-                    print('Converting ' + ch.name + ' from ppm to wtpc...')
-                    ch.setData(ch.data() / 10000.0)
-                    ch.name = ch.name.replace('ppm', 'wtpc')
-                    ch.setProperty('Units', 'wtpc')
+                    convertChannelToWtpc(ch)
             except:
                 continue
 
@@ -2598,6 +2637,7 @@ class BlockPlot(QWidget):
             self.plot.replot()
             return
 
+        self.x_max = 0
         if extStd == 'Model':
             self.x_max = np.nanmax([self.y_max/b.slope(channel) for b in self.settingsWidget.calibration.blocks])
         else:
@@ -2612,7 +2652,7 @@ class BlockPlot(QWidget):
                     except:
                         print(df.to_string())
 
-                self.x_max = np.nanmax(maxRMvals)
+                self.x_max = max(self.x_max, np.nanmax(maxRMvals))
 
             #self.x_max = np.nanmax([np.nanmax(b.dataFrame()[f'{channel}_RMppm']) for b in self.settingsWidget.calibration.blocks])
 
@@ -2649,7 +2689,7 @@ class BlockPlot(QWidget):
             return
 
         try:
-            x_vals = np.logspace(-3, ceil(log(self.x_max)), 200)
+            x_vals = np.logspace(-3, ceil(log10(self.x_max)), 200)
         except:
             x_vals = np.logspace(-3, 3, 200)
             self.x_max = 1000.
