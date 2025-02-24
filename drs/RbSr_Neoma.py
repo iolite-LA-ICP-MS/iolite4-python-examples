@@ -251,7 +251,7 @@ def runDRS():
     int_channels = [Rb87c_CPS, Sr87_Sr86_Raw, Rb87_Sr86_Raw, Sr87_Rb87_Raw, Sr88_Sr86_Raw, Sr84_Sr86_Raw, Beta, Sr87m_Sr86m_Raw, Rb87_Sr86m_Raw, Sr84m_Sr86m_Raw]
     for name, channel in zip(int_channel_names, int_channels):
         data.createTimeSeries(name, data.Intermediate,
-                              indexChannel.time(), channel)
+                              indexChannel.time(), channel, {'DRSSettings': settings})
 
     drs.message("Correcting ratios...")
     drs.progress(80)
