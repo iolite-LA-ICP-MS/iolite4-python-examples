@@ -27,8 +27,10 @@ from functools import partial
 from openpyxl import Workbook
 from openpyxl.styles import NamedStyle, Font, Border, Side
 
-'''Important note: the file extension must be .xlsx (not .xls), otherwise Excel will not load the file'''
-# TODO modify file extension if need be.
+# Make sure file name ends with .xlsx
+export_filepath = data.exportFilePath()
+if not export_filepath.endswith('.xlsx'):
+    export_filepath = export_filepath + '.xlsx'
 
 # Insert your Organisation Details below
 author_details = datetime.now().strftime("%d %B %Y") + ', School of Earth Sciences, The University of Melbourne'
