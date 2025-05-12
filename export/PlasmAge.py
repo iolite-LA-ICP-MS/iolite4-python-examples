@@ -28,7 +28,6 @@ from openpyxl import Workbook
 from openpyxl.styles import NamedStyle, Font, Border, Side
 
 # Make sure file name ends with .xlsx
-export_filepath = data.exportFilePath()
 if not export_filepath.endswith('.xlsx'):
     export_filepath = export_filepath + '.xlsx'
 
