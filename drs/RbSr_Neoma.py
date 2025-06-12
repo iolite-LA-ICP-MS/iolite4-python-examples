@@ -4,7 +4,7 @@
 #/ Authors: Grant Craig and Bence Paul
 #/ Description: RbSr DRS for Neoma MSMS, includes approx age calc
 #/ References: None
-#/ Version: 1.0
+#/ Version: 1.2
 #/ Contact: grant.craig@thermofisher.com
 
 import math
@@ -21,20 +21,33 @@ This function calculates an age from the individual data points within a selecti
 '''
 def calcSelectionAge(sel):
     result = Result()
-    try:
-        Rb87_CPS = data.timeSeriesList(
-            data.Intermediate, {'Post-shift mass': '87'})[0]
-        Sr86_CPS = data.timeSeriesList(
-            data.Intermediate, {'Post-shift mass': '105'})[0]
-        Sr87_CPS = data.timeSeriesList(
-            data.Intermediate, {'Post-shift mass': '106'})[0]
 
-        #Sr87_Sr86 = data.timeSeries('StdCorr_Sr87s_Sr86s')
+    # If no post-shift mass property, we'll use the 'Rb87_CPS' channel directly
+    # Not sure if this can be tricked into using the wrong channel...
+    try:
+        Rb87_CPS = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '87'})[0]
+    except IndexError:
+        print("Unable to get Rb87_CPS based on post-shift mass, using Rb87_CPS by name instead...")
+        Rb87_CPS = data.timeSeries('Rb87_CPS')
+
+    try:
+        Sr86_CPS = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '105'})[0]
+        Sr87_CPS = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '106'})[0]
+    except RuntimeError:
+        print("Could not get the Sr counts channels needed for plotting iso in Rb Sr")
+        return result
+
+    try:
         Sr87_Sr86 = data.timeSeries('StdCorr_Sr87_Sr86_MBC')
-        #Rb87_Sr86 = data.timeSeries('StdCorr_Rb87_Sr86s')
         Rb87_Sr86 = data.timeSeries('StdCorr_Rb87_Sr86_MBC')
     except RuntimeError:
-        print("Could not get the channels needed for plotting iso in Rb Sr")
+        print(f'Couldn\'t find MBC channels for {sel.name}. Trying CPS channels...')
+        try:
+            Sr87_Sr86 = data.timeSeries('StdCorr_Sr87s_Sr86s')
+            Rb87_Sr86 = data.timeSeries('StdCorr_Rb87_Sr86s')
+        except RuntimeError:
+            print("Could not get the ratio channels needed for plotting iso in Rb Sr")
+            return result
 
     # Resistor values for Rb87, Sr87 and Sr86
     R_Rb87 = 1.0e+11
@@ -59,27 +72,45 @@ def calcSelectionAge(sel):
     #V2CPS = settings['Volts2CPS']
     #l = settings['RbSrLambda']
 
+    # Sometimes the data are in CPS, other times in volts. Check here for volts
+    # This assumes that if the median difference between points is less than 0.1, then it's in volts
+    # This might get tripped up at some stage...? Should be good, but look here for bugs.
+    median_diff = np.abs(np.nanmedian(np.diff(Rb87_CPS.dataForSelection(sel))))
+    unitsIsVolts = median_diff < 0.1
+
+    rb87_data = Rb87_CPS.dataForSelection(sel)
+    if unitsIsVolts:
+        rb87_data = rb87_data * self.V2CPS
+
+    sr87_data = Sr87_CPS.dataForSelection(sel)
+    if unitsIsVolts:
+        sr87_data = sr87_data * self.V2CPS
+
+    sr86_data = Sr86_CPS.dataForSelection(sel)
+    if unitsIsVolts:
+        sr86_data = sr86_data * self.V2CPS
+
     # Calculate point uncertainties for Rb87, Sr87, and Sr86
     # Amplifier noise on Rb87 (in CPS)
     s_amp_Rb87 = math.sqrt(4. * K * TK * R_Rb87 / it) * V2CPS
     # Total noise on Rb87 (as RSE)
-    s_Rb87 = np.sqrt((s_amp_Rb87 / Rb87_CPS.dataForSelection(sel)) ** 2 +
-                    (1 / np.sqrt(Rb87_CPS.dataForSelection(sel) + it))**2)
+    s_Rb87 = np.sqrt((s_amp_Rb87 / rb87_data) ** 2 +
+                    (1 / np.sqrt(rb87_data + it))**2)
 
     # Sr87
     # Amplifier noise on Sr87 (in CPS) NOTE: Different form to basic Johnson
     # eqn. See Grant Craig's spreadsheet
     s_amp_Sr87 = math.sqrt(4. * K * TK * R_Sr87 / it) / R_Sr87 * R_Rb87 * V2CPS
     # Total noise on Sr87 (as RSE)
-    s_Sr87 = np.sqrt((s_amp_Sr87 / Sr87_CPS.dataForSelection(sel)) ** 2 +
-                    (1 / np.sqrt(Sr87_CPS.dataForSelection(sel) + it))**2)
+    s_Sr87 = np.sqrt((s_amp_Sr87 / sr87_data) ** 2 +
+                    (1 / np.sqrt(sr87_data + it))**2)
 
     # Sr86
     # Amplifier noise on Sr86 (in CPS)
     s_amp_Sr86 = math.sqrt(4. * K * TK * R_Sr86 / it) / R_Sr87 * R_Rb87 * V2CPS
     # Total noise on Sr86 (as RSE)
-    s_Sr86 = np.sqrt((s_amp_Sr86 / Sr86_CPS.dataForSelection(sel)) ** 2 +
-                    (1 / np.sqrt(Sr86_CPS.dataForSelection(sel) + it))**2)
+    s_Sr86 = np.sqrt((s_amp_Sr86 / sr86_data) ** 2 +
+                    (1 / np.sqrt(sr86_data + it))**2)
 
     s_Rb87_86 = np.sqrt(s_Rb87 ** 2. + s_Sr86 ** 2.) * Rb87_Sr86.dataForSelection(sel) * 2.
     s_Sr87_86 = np.sqrt(s_Sr87 ** 2. + s_Sr86 ** 2.) * Sr87_Sr86.dataForSelection(sel) * 2.
@@ -216,12 +247,6 @@ def runDRS():
     # Sr88_107_CPS = data.timeSeriesList(
         # data.Intermediate, {'Post-shift mass': '107'})[0].data()
 
-    #Rb85_CPS = data.timeSeriesList(
-        #data.Intermediate, {'Element': 'Rb', 'Mass' : '85'})[0].data()
-    Rb87_CPS = data.timeSeriesList(
-        data.Intermediate, {'Element': 'Rb', 'Mass' : '87'})[0].data()
-    #Sr86_CPS = data.timeSeriesList(
-        #data.Intermediate, {'Element': 'Sr', 'Mass' : '86'})[0].data()
     Sr88_CPS = data.timeSeriesList(
         data.Intermediate, {'Element': 'Sr', 'Mass' : '88'})[0].data()
     Sr84F_CPS = data.timeSeriesList(
@@ -233,9 +258,25 @@ def runDRS():
     Sr88F_CPS = data.timeSeriesList(
         data.Intermediate, {'Element': 'F', 'Mass' : '88'})[0].data()
 
-    #Rb87_CPS = Rb85_CPS * 0.38562
-    Rb87c_CPS = Rb87_CPS - Sr88_CPS * Sr87F_CPS/Sr88F_CPS #use either this line, or line above, depending on cup configuration.
-    #Rb85_Sr86s_Raw = Rb85_CPS/Sr86F_CPS
+    if settings["UseRb85"]:
+        try:
+            Rb85_CPS = data.timeSeriesList(
+                data.Intermediate, {'Element': 'Rb', 'Mass' : '85'})[0].data()
+        except IndexError:
+            IoLog.error("Could not find Rb85 channel. Was it measured?")
+            drs.message("Error. See Messages")
+            drs.progress(100)
+            drs.finished()
+            return
+
+        Rb87c_CPS = Rb85_CPS * 0.38571
+
+    else:
+        Rb87_CPS = data.timeSeriesList(
+            data.Intermediate, {'Element': 'Rb', 'Mass' : '87'})[0].data()
+
+        Rb87c_CPS = Rb87_CPS - Sr88_CPS * Sr87F_CPS/Sr88F_CPS
+
     Sr87_Sr86_Raw = Sr87F_CPS/Sr86F_CPS
     Rb87_Sr86_Raw = Rb87c_CPS/Sr86F_CPS
     Sr87_Rb87_Raw = Sr87F_CPS/Rb87c_CPS
@@ -361,6 +402,7 @@ def settingsWidget():
     drs.setSetting("MaskChannel", defaultChannelName)
     drs.setSetting("MaskCutoff", 0.1)
     drs.setSetting("MaskTrim", 0.0)
+    drs.setSetting("UseRb85", False)
     drs.setSetting("R_Rb87", 1.0e+11)
     drs.setSetting("R_Sr87", 1.0e+13)
     drs.setSetting("R_Sr86", 1.0e+13)
@@ -415,6 +457,15 @@ def settingsWidget():
     maskTrimLineEdit.textChanged.connect(
         lambda t: drs.setSetting("MaskTrim", float(t)))
     formLayout.addRow("Mask trim", maskTrimLineEdit)
+
+    verticalSpacer2 = QtGui.QSpacerItem(
+        20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer2)
+
+    useRb85CheckBox = QtGui.QCheckBox(widget)
+    useRb85CheckBox.setChecked(settings["UseRb85"])
+    useRb85CheckBox.toggled.connect(lambda t: drs.setSetting("UseRb85", bool(t)))
+    formLayout.addRow("Use Rb85", useRb85CheckBox)
 
     verticalSpacer2 = QtGui.QSpacerItem(
         20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
