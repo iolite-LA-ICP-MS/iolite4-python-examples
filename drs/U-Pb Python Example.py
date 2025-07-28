@@ -23,7 +23,7 @@ lut = np.logspace(0, 23, 1000, base=2.7)
 lu76 = (1/k)*(np.exp(l235*lut) - 1)/(np.exp(l238*lut) - 1)
 
 def downholeFunc_Lin(t, a, b):
-    return a + b*t
+    return a*t + b
 
 def downholeFunc_Exp(t, a, b, c):
     return a + b*np.exp(-c * t)
