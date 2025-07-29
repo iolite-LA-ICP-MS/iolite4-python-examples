@@ -395,6 +395,9 @@ def settingsWidget():
         defaultChannelName = timeSeriesNames[0]
 
     rmNames = data.selectionGroupNames(data.ReferenceMaterial)
+    if len(rmNames) < 1:
+        # This means no reference material selection groups have been created yet.
+        rmNames = data.referenceMaterialNames()
 
     drs.setSetting("IndexChannel", defaultChannelName)
     drs.setSetting("ReferenceMaterial", "A_MAD")
