@@ -758,10 +758,12 @@ class Calibration(object):
         try:
             externals = [es for es in channel.property('External standard').split(',') if es]
         except:
+            print(f'Could not extract external standards for {name}. Fractionation will not be calculated.')
             self.frac[name] = pd.DataFrame()
             return
 
         if not externals:
+            print(f'No externals set for {name}. Fractionation will not be calculated.')
             self.frac[name] = pd.DataFrame()
             return
 
@@ -850,14 +852,37 @@ class Calibration(object):
             td = pd.Timedelta(td)
 
         if not td or len(isdf) == 0:
-            print(f'Could not fit fractionation for {name} {isElements} {td} {k} {group}')
             return None, None, None, None
 
         rsd = isdf.resample(td).sem()['r']
-
         isdf = isdf.resample(td).median()
+
+        # There is a chance that we may have no data for the resampled periods, so
+        # we need to check for that below...
+
         t = isdf['t']
         r = isdf['r']
+
+        # Check if we have any NaNs in the data
+        if t.isna().any():
+            # Drop any rows where t, r or rsd is NaN as blank time values will cause issues
+            # with the fitting (don't think there's a problem with blank  r values)
+            # Create a for loop that loops over the values in t, r and rsd
+            rows_to_drop = []
+            for i in range(len(t)):
+                if pd.isna(t.iloc[i]) or pd.isna(r.iloc[i]) or pd.isna(rsd.iloc[i]):
+                    rows_to_drop.append(i)
+
+            # After dropping NaNs, re-create t, r, rsd
+            isdf = isdf.drop(index=isdf.index[rows_to_drop])
+            rsd = rsd.drop(index=rsd.index[rows_to_drop])
+            t = isdf['t']
+            r = isdf['r']
+
+        # If we have no data after resampling, return None
+        if len(t) == 0 or len(r) == 0:
+            print(f'No data after resampling for {name} for {isElements} in group {group}')
+            return None, None, None, None
 
         rsd[rsd==0] = 0.02*np.nanmean(r)
         rsd[rsd!=rsd] = 0.02*np.nanmean(r)
@@ -1181,6 +1206,7 @@ def runDRS():
             for c in [c for c in data.timeSeriesList(data.Input) if 'TotalBeam' not in c.name]:
                 params[c.name] = cal.fractionation(c.name)
 
+            makeBeamSeconds()
             bs = data.timeSeries('BeamSeconds').data()
             isIndex = data.createTimeSeriesFromMetadata('ISElementIndex', 'Internal element')
 
