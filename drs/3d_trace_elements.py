@@ -214,7 +214,7 @@ class Block(object):
             return 1e-6
 
         for group in groups:
-            norm = ryields[group] if drs.setting('NormalizeExternals') else 1
+            norm = ryields.get(group, 1) if drs.setting('NormalizeExternals') and ryields and ryields.get(group) is not None else 1
             rmdata = data.referenceMaterialData(group)
 
             for name, channel in zip(channelNames, cpsChannels):
