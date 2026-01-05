@@ -70,15 +70,13 @@ def runDRS():
     commonProps = {'DRS': drs.name()}
 
     mask = drs.createMaskFromLaserLog(0)
-    drs.baselineSubtract(data.selectionGroup('Baseline'), data.timeSeriesList(data.Input), mask, 25, 50)
+    drs.baselineSubtract(None, data.timeSeriesList(data.Input), mask, 25, 50)
     drs.createBeamSecondsFromLaserLog()
     beamSeconds = data.timeSeries('BeamSeconds').data()
+    maxBS = np.nanmax(beamSeconds)
 
-    timeStep = indexChannel.time()[1] - indexChannel.time()[0]
     startTrimSec = settings["StartTrim"]
-    startTrimIndex = int(round(startTrimSec/timeStep))
     endTrimSec = settings["EndTrim"]
-    endTrimIndex = int(round(endTrimSec/timeStep))
 
     ratios = [
         {
@@ -129,17 +127,12 @@ def runDRS():
         if ratio['dhfc']:
             print(f'... doing down-hole correction for {ratio["name"]}')
             DHF = data.compileDownhole(data.selectionGroup(settings['ReferenceMaterial']), ts)
-            DHFnans = np.isnan(DHF[1])
-            DHFt = DHF[0][~DHFnans]
-            DHFr = DHF[1][~DHFnans]
-
-            if startTrimIndex != 0:
-                DHFt = DHFt[startTrimIndex:]
-                DHFr = DHFr[startTrimIndex:]
-    
-            if endTrimIndex != 0:
-                DHFt = DHFt[:-endTrimIndex]
-                DHFr = DHFr[:-endTrimIndex]
+            time_mask = (DHF[0] > startTrimSec) & (DHF[0] < (maxBS - endTrimSec))
+            finite_mask = np.isfinite(DHF[1])
+            combined_mask = time_mask & finite_mask
+            cropped_indices = np.where(combined_mask)[0]
+            DHFt = DHF[0][cropped_indices]
+            DHFr = DHF[1][cropped_indices]
             
             print('... fitting down-hole function')
             print(f'... fit model: {settings["Model"]}')

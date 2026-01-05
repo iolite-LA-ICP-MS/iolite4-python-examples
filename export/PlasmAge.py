@@ -27,6 +27,8 @@ from functools import partial
 from openpyxl import Workbook
 from openpyxl.styles import NamedStyle, Font, Border, Side
 
+include_sequence_number = True # If True, the sequence number from the laser log will be included as the final column.
+
 # Make sure file name ends with .xlsx
 if not export_filepath.endswith('.xlsx'):
     export_filepath = export_filepath + '.xlsx'
@@ -162,6 +164,8 @@ def write_header():
     c.font = Font(bold=True, size=14)
 
     header_line2=['Identifier','Comments','f206c','206Pb','Uppm','Th/U','206Pb/204Pb','1s%','238U/206Pb','1s%','207Pb/206Pb','1s%','208Pb/206Pb','1s%','207Pb/235U','1s%','206Pb/238U','1s%','Rho','208Pb/232Th','1s%','207Pb/206Pb','2s (abs)','2ssys (abs)','206Pb/238U','2s (abs)','2ssys (abs)','207Pb/235U','2s (abs)','2ssys (abs)','208Pb/232Th','2s (abs)','2ssys (abs)','% conc']
+    if include_sequence_number:
+        header_line2.append('Sequence Number')
 
     for col in range(1, len(header_line2)+1):
         ws.cell(row=2, column=col, value=header_line2[col-1])
@@ -271,6 +275,8 @@ write_column(25, data_func = partial(channel_data, ChannelNames.Pb206_U238_age),
 write_column(28, data_func = partial(channel_data, ChannelNames.Pb207_U235_age), uncert_types=[2,3])
 write_column(31, data_func = partial(channel_data, ChannelNames.Pb208_Th232_age), uncert_types=[2,3])
 write_column(34, data_func = conc_pct)
+if include_sequence_number:
+    write_column(35, data_func = partial(selection_data, 'Sequence Number'))
 add_borders()
 set_number_formats()
 write_footer()
