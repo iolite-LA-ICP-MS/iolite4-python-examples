@@ -549,7 +549,7 @@ def findBlocks(method=None):
     selections = list(itertools.chain(*[sg.selections() for sg in groups]))
 
     if len(selections) == 0:
-        print('No selections to find blocks for!')
+        print('There were no selections for the external standards...')
         raise MissingRMGroupError
 
     # Create a list of component selections
@@ -590,26 +590,29 @@ def findBlocks(method=None):
                 current_label += 1
             labels.append(current_label)
     elif method == 'Auto Clustering' and not allAssigned:
+        print('findBlocks using Auto Clustering')
         from sklearn.cluster import KMeans
         from sklearn.metrics import silhouette_score
         scores = []
-        a = np.array(selMidTimes).reshape(-1,1)
+        a = np.array(selMidTimes).reshape(-1, 1)
         for nc in range(2, len(selMidTimes)):
             km = KMeans(n_clusters=nc).fit(a)
             ss = silhouette_score(a, km.labels_)
             scores.append(ss)
 
         nc = np.argmax(scores)+2 # 1 (bc above starts at nc=2) + 1 (because starting at 0)
-        print(f'findBlocks decided to use {nc} clusters')
+        print(f'AutoClustering findBlocks decided to use {nc} clusters')
         km = KMeans(n_clusters=int(nc)).fit(a)
         labels = km.labels_ + 1
     elif method == 'Clustering' and not allAssigned:
+        print('findBlocks using Clustering')
         from sklearn.cluster import KMeans
         nc = drs.setting('NClusters')
         if not nc:
             nc = 5
         print(f'findBlocks decided to use {nc} clusters')
-        a = np.array(selMidTimes).reshape(-1,1)
+        a = np.array(selMidTimes).reshape(-1, 1)
+        print(a.shape)
         km = KMeans(n_clusters=int(nc)).fit(a)
         labels = km.labels_ + 1
     else:
@@ -641,6 +644,8 @@ def findBlocks(method=None):
 
 
 def fitSurface(blocks, channelName):
+    if not blocks:
+        return None, None
 
     slopes = np.array([block.slope(channelName) for block in blocks])
     slopes_unc = np.array([block.slopeUncert(channelName) for block in blocks])
@@ -1388,7 +1393,7 @@ def runDRS():
 
         data.createTimeSeries('CriteriaIndex', data.Intermediate, indexChannel.time(), crit_index, commonProps)
 
-        for c in data.timeSeriesList(data.Output):
+        for c in data.timeSeriesList(data.Output, {'DRS': drs.name(), 'Units': 'µg.g-1'}):
             d = c.data()*norm
             c.setData(d)
 
@@ -2399,6 +2404,13 @@ class BlockPlot(QWidget):
         self.updatePlot()
 
     def configBlocks(self):
+        # Check if we have TotalBeam before continuing
+        try:
+            data.timeSeries('TotalBeam')
+        except RuntimeError:
+            QMessageBox.information(self, 'Error', 'TotalBeam time series not found. Please make sure you have loaded your data before configuring blocks.')
+            return
+
         d = QDialog(self)
         d.setWindowTitle('Block assignments')
         d.setLayout(QVBoxLayout())
@@ -3584,7 +3596,7 @@ class SettingsWidget(QWidget):
         drs.setDefaultSetting('AffinityCorrection', False)
         drs.setDefaultSetting('AffinityCorrection%', 15.0)
         drs.setDefaultSetting('BlockFindingMethod', 'Simple')
-        drs.setDefaultSetting('NClusters', -1)
+        drs.setDefaultSetting('NClusters', 1)
         drs.setDefaultSetting('ISCriteria', [])
         drs.setDefaultSetting('UseIonizationEnergies', False)
 
@@ -4457,7 +4469,7 @@ class PTSettingsWidget(QWidget):
         drs.setDefaultSetting('AffinityCorrection', False)
         drs.setDefaultSetting('AffinityCorrection%', 15.0)
         drs.setDefaultSetting('BlockFindingMethod', 'Simple')
-        drs.setDefaultSetting('NClusters', -1)
+        drs.setDefaultSetting('NClusters', 1)
         drs.setDefaultSetting('PreserveISProperties', False)
         drs.setDefaultSetting('ISCriteria', [])
 
@@ -4596,8 +4608,12 @@ class PTSettingsWidget(QWidget):
         else:
             self.addInt()
 
+        def changeBlockMethod(text):
+            showBlockCount(text == 'Clustering')
+            self.blockCountSpinBox.setValue(drs.setting('NClusters'))
+
         # Make connections
-        self.blockComboBox.textActivated.connect(lambda t: drs.setSetting('BlockFindingMethod', t))
+        self.blockComboBox.textActivated.connect(changeBlockMethod)
         self.blockCountSpinBox.valueChanged.connect(lambda v: drs.setSetting('NClusters', int(v)))
         self.normalizeCheckBox.toggled.connect(lambda b: drs.setSetting('NormalizeExternals', b))
         self.normalizeComboBox.textActivated.connect(lambda t: drs.setSetting('MasterExternal', t))
@@ -4614,7 +4630,6 @@ class PTSettingsWidget(QWidget):
         self.addIntButton.clicked.connect(lambda: self.addInt())
         self.removeIntButton.clicked.connect(self.removeInt)
         self.criteriaButton.clicked.connect(self.editCriteria)
-        self.blockComboBox.textActivated.connect(lambda t: showBlockCount(t == 'Clustering'))
         self.bsMethodComboBox.textActivated.connect(lambda t: showBSOptions('threshold' in t))
         self.maskMethodComboBox.textActivated.connect(lambda t: showMaskOptions(t == 'Cutoff'))
         self.maskCheckBox.toggled.connect(lambda b: toggleMask(b))
