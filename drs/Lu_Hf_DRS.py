@@ -68,23 +68,38 @@ def runDRS():
     drs.progress(25)
 
     allInputChannels = data.timeSeriesList(data.Input)
+    blGrp = None
 
-    for counter, channel in enumerate(allInputChannels):
-        drs.message("Baseline subtracting %s" % channel.name)
-        drs.progress(25 + 50*counter/len(allInputChannels))
+    if len(data.selectionGroupList(data.Baseline)) > 1:
+        IoLog.error("There are multiple baseline groups. Lu-Hf DRS cannot proceed...")
+        drs.message("Error. See Messages")
+        drs.progress(100)
+        drs.finished()
+        return
+    elif len(data.selectionGroupList(data.Baseline)) < 1:
+        IoLog.error("No baselines. Please select some baselines. Lu-Hf DRS cannot proceed...")
+        drs.message("Error. See Messages")
+        drs.progress(100)
+        drs.finished()
+        return
+    else:
+        blGrp = data.selectionGroupList(data.Baseline)[0]
 
-        drs.baselineSubtract(data.selectionGroup("baselines"),
-                 [allInputChannels[counter]], mask, 25, 75)
+    if len(blGrp.selections()) < 1:
+        IoLog.error("No baseline selections. Please select some baselines. Lu-Hf DRS cannot proceed...")
+        drs.message("Error. See Messages")
+        drs.progress(100)
+        drs.finished()
+        return
 
-    # TODO: We should change this to find the channel by mass rather than name
-    # This way, we could change the reaction gas via the settings...
+    drs.baselineSubtract(blGrp, allInputChannels, mask, 25, 75)
 
-    Yb254 = data.timeSeries("Yb254_CPS").data()
-    Lu175 = data.timeSeries("Lu175_CPS").data()
+    Yb254 = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '254'})[0].data()
+    Lu175 = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '175'})[0].data()
     #Lu191 = data.timeSeries("Lu191_CPS").data()
-    Lu257 = data.timeSeries("Lu257_CPS").data()
-    Hf258 = data.timeSeries("Hf176_CPS").data()
-    Hf260 = data.timeSeries("Hf178_CPS").data()
+    Lu257 = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '257'})[0].data()
+    Hf258 = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '258'})[0].data()
+    Hf260 = data.timeSeriesList(data.Intermediate, {'Post-shift mass': '260'})[0].data()
 
     Lu176_Hf177 = (Lu175 * Lu176_175ref) / (Hf260 * Hf177_178ref)
     Lu176_Hf176 = (Lu175 * Lu176_175ref) / (Hf258)
@@ -96,6 +111,17 @@ def runDRS():
     data.createTimeSeries("Hf176_177", data.Output, indexChannel.time(), Hf176_177)
     data.createTimeSeries("Lu176_Hf176", data.Output, indexChannel.time(), Lu176_Hf176)
     data.createTimeSeries("Hf177_176", data.Output, indexChannel.time(), Hf177_176)
+
+    # Check that ref mat has 176Lu/177Hf value
+    rm = data.referenceMaterialData(rmName)
+    if not "176Lu/177Hf" in rm.keys():
+        IoLog.error(f"There was no 176Lu/177Hf in the RM file \'{rmName}\'")
+        drs.message("Error. See Messages")
+        drs.progress(100)
+        drs.finished()
+        return
+
+    # Assumes other values are present
 
     StdValue_Lu176_Hf177 = data.referenceMaterialData(rmName)["176Lu/177Hf"].value()
     StdValue_Hf176_177 = data.referenceMaterialData(rmName)["176Hf/177Hf"].value()
