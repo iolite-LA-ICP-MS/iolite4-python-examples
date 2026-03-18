@@ -64,7 +64,7 @@ from scipy.signal import savgol_filter
 
 import statsmodels.api as sm
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
-from iolite_helpers import fitLine, formatResult
+from iolite_helpers import fitLine, formatResult, qsettings_bool
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -215,6 +215,7 @@ class Block(object):
 
         for group in groups:
             norm = ryields.get(group, 1) if drs.setting('NormalizeExternals') and ryields and ryields.get(group) is not None else 1
+            #print('Normalizing group', group, 'by', norm)
             rmdata = data.referenceMaterialData(group)
 
             for name, channel in zip(channelNames, cpsChannels):
@@ -223,7 +224,12 @@ class Block(object):
                     temp_df.loc[temp_df['group'] == group, f'{name}_Uncert'] /= norm
                     try:
                         if use_isoConcs:
-                            rmd = rmdata[name.replace('_CPS', '')]
+                            # There's a chance the data have been stored with the symbol first, or with the mass first, so check here
+                            if rmdata.get(name.replace("_CPS", "")):
+                                rmd = rmdata[name.replace("_CPS", "")]
+                            else:
+                                rmd = rmdata[channel.property('Element') + channel.property('Mass')]
+
                             rmValue = rmd.valueInPPM()
                         else:
                             rmd = rmdata[channel.property('Element')]
@@ -418,8 +424,10 @@ def calculateRelativeYields():
             channelElement = channel.property('Element')
             try:
                 if use_isoConcs:
-                    groupRMValue = data.referenceMaterialData(groupName)[channel.name.replace("_CPS", "")].valueInPPM()
-                    masterGroupRMValue = data.referenceMaterialData(masterGroupName)[channel.name.replace("_CPS", "")].valueInPPM()
+                    # There's a chance the data have been stored with the symbol first, or with the mass first, so use channel properties instead of channel name here...
+                    ch_name = channel.property('Element') + channel.property('Mass')
+                    groupRMValue = data.referenceMaterialData(groupName)[ch_name].valueInPPM()
+                    masterGroupRMValue = data.referenceMaterialData(masterGroupName)[ch_name].valueInPPM()
 
                 else: 
                     groupRMValue = data.referenceMaterialData(groupName)[channelElement].valueInUnits('fg') if use_fg else data.referenceMaterialData(groupName)[channelElement].valueInPPM()
@@ -1477,7 +1485,7 @@ def runDRS():
     #IoLog.warning(f'There was a problem calculating the sensitivity of {badChannelsString} for selection(s) {badSelsString}')
 
     # Convert ppm output channel to wtpc if user has set this setting
-    if QSettings().value('ConvertPPMtoWtPCOutputChannels', False):
+    if qsettings_bool(QSettings().value('ConvertPPMtoWtPCOutputChannels', False)):
         # We want to convert to wtpc if:
         # Using a master external + the maser is in wtpc, or
         # Not using a master extrnal but all of the RMs in use are in wtpc.
@@ -2373,12 +2381,13 @@ class BlockPlot(QWidget):
         self.plot = Plot(self)
         self.plot.setBackground(CUI().tabBackgroundColor())
         self.plot.setToolsVisible(False)
+        self.titleItem = self.plot.addTitle('')
 
         self.plot.left().label = f'Intensity ({drs.setting("StatName")})'
         if drs.setting('UseFG'):
             self.plot.bottom().label = 'Mass (fg)'
         else:
-            self.plot.bottom().label = 'Concentration'
+            self.plot.bottom().label = 'Concentration (ppm)'
         self.layout().addWidget(self.plot)
 
         self.logButton = OverlayButton(self.plot, 'BottomLeft', 0, 0)
@@ -2544,7 +2553,7 @@ class BlockPlot(QWidget):
             if drs.setting('UseFG'):
                 self.plot.bottom().label = 'Weight (fg)'
             else:
-                self.plot.bottom().label = 'Concentration'
+                self.plot.bottom().label = 'Concentration (ppm)'
 
             plot.replot()
 
@@ -2616,16 +2625,18 @@ class BlockPlot(QWidget):
         self.plot.clearGraphs()
         self.plot.clearItems()
 
-        self.plot.left().label = f'Intensity ({drs.setting("StatName")})'
+        self.plot.left().label = f'Intensity ({drs.setting("StatName")} cps)'
         if drs.setting('UseFG'):
             self.plot.bottom().label = 'Mass (fg)'
         else:
-            self.plot.bottom().label = 'Concentration'
+            self.plot.bottom().label = 'Concentration (ppm)'
 
         channel = self.settingsWidget.selectedChannelNames[0]
         if len(self.settingsWidget.calibration.blocks) < 1:
             print('No blocks to update BlockPlot with...')
             return
+
+        self.titleItem.setText(channel)
 
         extStd = data.timeSeries(channel).property('External standard')
         if type(extStd) != str or (extStd.split(',')[0] not in data.selectionGroupNames() and extStd != 'Model'):
