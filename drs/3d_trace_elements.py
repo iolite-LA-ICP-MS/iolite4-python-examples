@@ -1383,12 +1383,20 @@ def runDRS():
                         print(f'There was an issue using {el} ppm channel as an internal standard and it has been skipped')
                         continue
 
-                    if np.nanmedian(data.timeSeries(f'{el}_ppm').data()[si]*f) < 0 :
-                        print(f'\nNot including {el} in sum as it has a negative median concentration {np.nanmedian(data.timeSeries(f"{el}_ppm").data()[si])} over the course of selection {sel.name}.\n')
+                    sel_ppm = data.timeSeries(f'{el}_ppm').data()[si]*f
+
+                    if np.nanmedian(sel_ppm) < 0 :
+                        print(f'\nNot including {el} in sum as it has a negative median concentration {np.nanmedian(sel_ppm)} over the course of selection {sel.name}.\n')
                         continue
 
+                    # There may still be negative values for some points, and that can affect our sum normalisation, so just going to set any negative values to 0 and print a warning
+                    if(sel_ppm < 0).any():
+                        print(f'\nSelection {sel.name} has some negative values for {el} ppm. These values will be set to 0 for the purposes of sum normalisation.\n')
+                    sel_ppm[sel_ppm < 0] = 0
+
                     try:
-                        sum += data.timeSeries(f'{el}_ppm').data()[si]*f
+                        sum += sel_ppm
+                        # sum += data.timeSeries(f'{el}_ppm').data()[si]*f
                     except:
                         print(f'There was an issue using {el} ppm channel as an internal standard and it has been skipped')
 
