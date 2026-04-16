@@ -3,7 +3,7 @@
 #/ Authors: Joe Petrus and Bence Paul
 #/ Description: Trace elements with multiple reference materials
 #/ References: None
-#/ Version: 1.2
+#/ Version: 1.3
 #/ Contact: support@iolite-software.com
 
 """
@@ -4492,6 +4492,12 @@ class PTSettingsWidget(QWidget):
         drs.setDefaultSetting('PreserveISProperties', False)
         drs.setDefaultSetting('ISCriteria', [])
 
+        useIsotopicConcentrationsFromPrefs = settings.value('UseIsotopicConcentrations', False)
+        if isinstance(useIsotopicConcentrationsFromPrefs, str):
+            drs.setSetting('UseIsotopicConcentrations', useIsotopicConcentrationsFromPrefs.lower() == 'true')
+        else:
+            drs.setSetting('UseIsotopicConcentrations', useIsotopicConcentrationsFromPrefs)
+
         # Get refs to UI elements:
         self.extTable = ui.findChild(QTableWidget, 'extTable')
         self.addExtButton = ui.findChild(QToolButton, 'addExtButton')
@@ -4549,6 +4555,18 @@ class PTSettingsWidget(QWidget):
         self.criteriaButton = ui.findChild(QToolButton, 'criteriaButton')
         self.preserveISCheckBox = ui.findChild(QCheckBox, 'preserveISCheckBox')
         self.fgButton = ui.findChild(QToolButton, 'fgButton')
+        self.fgLabel = ui.findChild(QLabel, 'label_7')
+
+        '''
+        TODO: Currently you can't use the fg approach because you need to set
+        the thickness, density etc for each group. But for PTs you don't have 
+        any groups when you're adjusting the settings, so you don't have a way to set those properties.
+        Needs more thought about how to handle that... 
+        For the meantime, hide this option...
+        '''
+        self.fgButton.setVisible(False)
+        self.fgLabel.setVisible(False)
+
 
         # Setup UI elements:
         self.addExtButton.setIcon(CUI().icon('plus'))
@@ -4558,6 +4576,8 @@ class PTSettingsWidget(QWidget):
         self.criteriaButton.setIcon(CUI().icon('edit'))
         tbs = [self.addExtButton, self.addIntButton, self.removeExtButton, self.removeIntButton, self.criteriaButton]
         [b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon) for b in tbs]
+
+        self.fgButton.setChecked(drs.setting('UseFG'))
 
         self.normalizeComboBox.addItems(data.referenceMaterialNames())
         self.blockComboBox.addItems(['Assigned', 'Simple', 'Clustering', 'Auto clustering'])
@@ -4631,6 +4651,41 @@ class PTSettingsWidget(QWidget):
             showBlockCount(text == 'Clustering')
             self.blockCountSpinBox.setValue(drs.setting('NClusters'))
 
+        '''
+        # Check for null settings that might be missing because they were added after the last time the user used the settings widget, and set them to defaults if so:
+        IoLog.debug('Checking DRS settings for null values...')
+        def is_cpp_null(value):
+            # Normal Python null
+            if value is None:
+                return True
+
+            # PythonQt nullptr wrapper type (common case)
+            tname = type(value).__name__
+            if tname == 'nullptr_t':
+                return True
+
+            # Fallback if type name differs across builds/bindings
+            r = repr(value)
+            return r.startswith('nullptr_t ') or r.startswith('nullptr_t(') or 'nullptr_t (C++ Object' in r
+
+        # Create a copy of the settings so that we can easily edit them below and then copy them back to DRS if needed.
+        settings_dict = drs.settings()
+
+        settings_updated = False
+        for key in settings_dict:
+            if is_cpp_null(drs.setting(key)):
+                IoLog.debug(f'Setting {key} was null, resetting to default.')
+                settings_dict[key] = None
+                IoLog.debug(f'   ... new value: {settings_dict[key]}')
+                settings_updated = True
+
+        if settings_updated:
+            IoLog.debug('Updating DRS settings with new values...')
+            drs.setSettings(settings_dict)
+        else:
+            IoLog.debug('No DRS settings were null, no update needed.')
+        '''
+
         # Make connections
         self.blockComboBox.textActivated.connect(changeBlockMethod)
         self.blockCountSpinBox.valueChanged.connect(lambda v: drs.setSetting('NClusters', int(v)))
@@ -4653,6 +4708,7 @@ class PTSettingsWidget(QWidget):
         self.maskMethodComboBox.textActivated.connect(lambda t: showMaskOptions(t == 'Cutoff'))
         self.maskCheckBox.toggled.connect(lambda b: toggleMask(b))
         self.preserveISCheckBox.toggled.connect(lambda b: drs.setSetting('PreserveISProperties', b))
+        self.fgButton.clicked.connect(lambda b: self.updateDRSSetting('UseFG', b))
 
     def addExt(self, props=None):
         row = self.extTable.rowCount
