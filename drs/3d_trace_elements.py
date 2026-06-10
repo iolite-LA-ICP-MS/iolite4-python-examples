@@ -618,6 +618,10 @@ def findBlocks(method=None):
         nc = drs.setting('NClusters')
         if not nc:
             nc = 5
+
+        if nc < 1:
+            print(f'Number of clusters was set to {nc} in settings, which is invalid. Defaulting to back to 1 cluster.')
+            nc = 1
         print(f'findBlocks decided to use {nc} clusters')
         a = np.array(selMidTimes).reshape(-1, 1)
         print(a.shape)
