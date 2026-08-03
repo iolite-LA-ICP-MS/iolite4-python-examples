@@ -14,6 +14,18 @@ from iolite.ui import IolitePlotPyInterface as Plot
 from iolite.ui import IolitePlotSettingsDialog as PlotSettings
 from iolite.QtGui import QAction, QPen
 from iolite.types import Result
+from iolite.QtCore import Qt, Signal
+from iolite.QtGui import (
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QTabBar,
+    QTabWidget,
+    QWidget,
+    QFormLayout
+)
+
 
 from scipy.optimize import curve_fit
 import numpy as np
@@ -132,6 +144,97 @@ def getSelRatioIntensityCorr(sel):
     return result
 
 
+def addCaPOUncertsInQuadrature(sel):
+    ''' 
+    This function adds the uncertainties from the CaPO correction and the Sr8786_Corr channel 
+    in quadrature for a given selection. 
+    Stores it as an associated result.
+
+    In the following equations, (described using the Linear approach below) we calculate the uncertainty in the CaPO correction by 
+    breaking it into two parts: correctionAmount = F = slope * X + intercept, where X
+    is the totalSrBeam value. We assume covariance in the slope and intercept values
+    but no covariance between the slope/intercept and the totalSrBeam value.
+
+    The uncertainty in F is then calculated using error propagation:
+    sigma_F^2 = (dF/dslope)^2 * sigma_slope^2 + (dF/dintercept)^2 * sigma_intercept^2 + (dF/dX)^2 * sigma_X + 2 * (dF/dslope) * (dF/dintercept) * cov(slope, intercept)
+    where dF/dslope = X, dF/dintercept = 1, dF/dX = p1, sigma_slope is the uncertainty in the slope, 
+    sigma_intercept is the uncertainty in the intercept, sigma_X is the uncertainty in totalSrBeam and cov(slope, intercept) is the covariance between the slope and intercept.
+
+    The final corrected ratio (Y) is then Y = Sr8786_Corr / F, and the uncertainty in Y is calculated as:
+    sigma_Y / Y = sqrt((sigma_Sr8786_Corr / Sr8786_Corr)^2 + (sigma_F / F)^2)
+
+    The same goes for the exponential approach, but the uncertainty in F is calculated as:
+    (coming soon)
+
+    '''
+
+    result = Result()
+    Z_2stdErr = 0.0
+
+    try:
+        Z_ch = data.timeSeries("CaPOCorr_Sr8786") # Note that this is the CaPO corrected Sr8786 channel
+        # Substituting Z for the CaPO corrected Sr8786 channel, just for easier notation in the following equations. Z = Sr8786_CaPOCorr
+        # Also, in the following I'll be using raw data arrays to get the 1SD for the data calculations (easier)
+        Z_mean = data.result(sel, Z_ch).value()
+        Z_array = Z_ch.dataForSelection(sel)
+        Z_uncert = np.std(Z_array)
+
+        # Substituting X for the totalSrBeam channel, just for easier notation in the following equations. X = totalSrBeam
+        X_ch = data.timeSeries("totalSrBeam")
+        X_mean = data.result(sel, X_ch).value()
+        X_array = X_ch.dataForSelection(sel)
+        X_uncert = np.std(X_array)
+
+        #Substituting Y for the Sr8786_Corr channel, just for easier notation in the following equations. Y = Sr8786_Corr
+        Y_ch = data.timeSeries("StdCorrRb_Sr87_86")
+        Y_mean = data.result(sel, Y_ch).value()
+        Y_array = Y_ch.dataForSelection(sel)
+        Y_uncert = np.std(Y_array)
+
+        #Get all the CaPO fit parameters and uncertainties from the CaPOCorr_Sr8786 channel
+        fit_type = str(Z_ch.property("CaPO_fit_type"))
+
+        if fit_type == "Linear":
+            slope = Z_ch.property("CaPO_fit_slope")
+            intercept = Z_ch.property("CaPO_fit_intercept")
+            slope_uncert = Z_ch.property("CaPO_fit_slope_uncertainty")
+            intercept_uncert = Z_ch.property("CaPO_fit_intercept_uncertainty")
+            covariance = Z_ch.property("CaPO_fit_covariance")
+
+            # Check for any missing values:
+            if None in (slope, intercept, slope_uncert, intercept_uncert, covariance):
+                print(f'Missing fit parameters for selection {sel.name}. Cannot calculate uncertainty.')
+                return result
+
+            # Calculate the uncertainty in the correction using error propagation
+            var_F = (
+                (X_mean**2 * slope_uncert**2) +       # Variance of slope (p1)
+                intercept_uncert**2 +                 # Variance of intercept (p0)
+                (slope**2 * X_uncert**2) +              # Variance in totalSrBeam (X)
+                2 * X_mean * covariance               # Covariance of p0 and p1
+            )
+
+            sigma_F = np.sqrt(var_F)
+            # Calculate the mean of the correction factor (F_mean)
+            F_mean = (slope * X_mean) + intercept
+
+            # Final Step: Combine the random error (Z_uncert) with the systematic model error
+            # Z_mean has already been divided by F_mean point-by-point, so we just combine the relative errors
+            rel_sys_err_sq = (sigma_F / F_mean)**2
+            rel_rnd_err_sq = (Z_uncert / Z_mean)**2
+            
+            # The final total uncertainty for the selection:
+            Z_total_uncert = abs(Z_mean) * np.sqrt(rel_rnd_err_sq + rel_sys_err_sq)
+            Z_stdErr = 2.0 * Z_total_uncert / np.sqrt(len(Z_array))  # Standard error of the mean
+        
+    except (RuntimeError, TypeError, ZeroDivisionError) as e:
+        # Graceful fallback on error
+        print(f"Error propagating uncertainty: {e}")
+        return result
+
+    result.setValue(Z_stdErr)
+    return result
+
 
 def runDRS():
 
@@ -175,7 +278,7 @@ def runDRS():
     ProportionNaNi = settings["ProportionNaNi"]
     Age = settings["Age"]
     propErrors = settings["PropagateError"]
- 
+
     # Create debug messages for the settings being used
     IoLog.debug("indexChannelName = %s" % indexChannel.name)
     IoLog.debug("Masking data  = True" if maskOption else "Masking data  = False")
@@ -233,6 +336,15 @@ def runDRS():
 
     drs.baselineSubtract(blGrp, allInputChannels, mask, 15, 35)
 
+    # Priority is not transferred from inputs to intermediates, so can't prioritize channels when split-streaming.
+    # Setting it here using the splitstream options
+    if "SplitStreamInstrument" in settings and settings["SplitStreamInstrument"] != "":
+        instrument_name = settings["SplitStreamInstrument"]
+        for channel in data.timeSeriesList(data.Intermediate):
+            ch_instrument = channel.property("Machine Name")
+            if ch_instrument and instrument_name in ch_instrument:
+                channel.setProperty("Priority", 100)
+
     '''
     The following channels names include the REE interferences but
     we won't be correcting for REE unless the user selects CaAr+REE.
@@ -241,6 +353,9 @@ def runDRS():
 
 #########################
     try:
+        check88 = data.timeSeriesByMass(data.Intermediate, 88.0, 0.1)
+        print("Found channel %s for mass 88" % check88.property("Machine Name"))
+
         total88 = data.timeSeriesByMass(data.Intermediate, 88.0, 0.1).data()
         total87 = data.timeSeriesByMass(data.Intermediate, 87.0, 0.1).data()
         total86 = data.timeSeriesByMass(data.Intermediate, 86.0, 0.1).data()
@@ -297,7 +412,7 @@ def runDRS():
     try:
         total81_5 = data.timeSeriesByMass(data.Intermediate, 81.5, 0.1).data()
     except:
-        pass  
+        pass
 
     if ProportionCaAr < 0 or ProportionCaAr >1:
         IoLog.error("The proportion CaAr must be between 0 and 1.")
@@ -327,7 +442,7 @@ def runDRS():
 
     Sr88_86_reference = 8.37520938 #Reciprocal of 86Sr/88Sr = 0.1194 from Konter & Storm (2014, Chem. Geol)
 
-    Rb87_85_reference = 0.38571 
+    Rb87_85_reference = 0.38571
 
     PFract = (np.log(Sr88_86_reference/(total88/total86)))/(np.log(Sr88mass/Sr86mass))##calculate preliminary fractionation factor
 
@@ -533,10 +648,10 @@ def runDRS():
 
     # Gather up intermediate channels and add them as time series:
     int_channel_names = ['Sr84_corr','Rb85_corr','Sr86_corr','Sr87_corr','Sr88_corr']
-    int_channel_names += ['Sr87_86_Corr','BetaSr']
+    int_channel_names += ['Sr87_86_Corr', 'Rb87_Sr86_Corr', 'BetaSr']
 
     int_channels = [Sr84_corr,Rb85_corr,Sr86_corr,Sr87_corr,Sr88_corr]
-    int_channels += [Sr87_86_Corr,BetaSr]
+    int_channels += [Sr87_86_Corr, Rb87_Sr86_Corr, BetaSr]
 
     for name, channel in zip(int_channel_names, int_channels):
         data.createTimeSeries(name, data.Intermediate, indexChannel.time(), channel)
@@ -563,7 +678,7 @@ def runDRS():
             BetaRb = np.log(((SrRb87_corr)-(RefRbValue_Sr87_86 /np.power((Sr87mass / Sr86mass), BetaSr)*Sr86_corr))/(Rb85_corr*Rb87_85_reference))/np.log(Rb85mass/Rb87mass)
             data.createTimeSeries('BetaRb', data.Intermediate, indexChannel.time(), BetaRb)
             StdSpline_BetaRb = data.spline(Ref_Rb_Beta, "BetaRb").data()
-        
+
         except:
             IoLog.error("The Combined Sr DRS requires Rb Beta Ref Material (with reference 87Sr/86Sr) selections to proceed.")
             drs.message("DRS did not finish. Please check Messages")
@@ -598,7 +713,7 @@ def runDRS():
     totalSrBeam = Sr84_corr + Sr86_corr + Sr87_CorrRb + Sr88_corr
     data.createTimeSeries('totalSrBeam', data.Intermediate, indexChannel.time(), totalSrBeam)
 
-    # Calculating fractionation-corrected Rb/Sr (if "Rb_Sr_elemental" is selcted)
+    # Calculating fractionation-corrected Rb/Sr (if "Rb_Sr_elemental" is selected)
     if Rb_Sr_elemental:
         data.createTimeSeries('Rb87_Sr86_CorrRb', data.Intermediate, indexChannel.time(), Rb87_Sr86_CorrRb)
 
@@ -640,7 +755,8 @@ def runDRS():
         drs.progress(90)
 
         groups = [s for s in data.selectionGroupList() if s.type != data.Baseline]
-        data.propagateErrors(groups, [data.timeSeries("StdCorrRb_Sr87_86")], data.timeSeries("StdCorr_Sr87_86"), Sr_rmName)
+        #data.propagateErrors(groups, [data.timeSeries("StdCorrRb_Sr87_86")], data.timeSeries("StdCorr_Sr87_86"), Sr_rmName)
+        data.propagateErrors(groups, [data.timeSeries("StdCorrRb_Sr87_86"), data.timeSeries("Rb87_Sr86_final")], data.timeSeries("Sr87_86_CorrRb"), Sr_rmName)
 
 ##############################
 
@@ -648,6 +764,7 @@ def runDRS():
     if len(settings['CaPO_RMs']) > 0:
         print("Here are the RMs for CaPO correction:", settings['CaPO_RMs'])
         PLOT.clearGraphs()
+        PLOT.replot()
 
         # Get Sr signal and deviations for chosen RMs:
         Sr8786 = data.timeSeries('StdCorrRb_Sr87_86')
@@ -702,15 +819,29 @@ def runDRS():
             50
         )
 
+        params = []
+        param_uncertainties = []
+        param_covariances = []
+
         # Now add fit to all data
         if settings["CaPOEqType"] == 'Linear':
             def fitFunc(x, a, b):
                 return a + b*x
 
             params, cov = curve_fit(fitFunc, sigs_array, devs_array, ftol=1e-5)
+            # Get param uncertainties from covariance matrix
+            param_uncertainties = np.sqrt(np.diag(cov))
+            param_covariances = cov[0, 1] #With just two parameters, the covariance matrix is 2x2, so the off-diagonal element is cov[0,1] (or cov[1,0])
 
-            print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
+            print(f"Here are the fit params: Slope: {params[1]:.2g} ± {param_uncertainties[1]:.2g} ({np.abs(param_uncertainties[1] / params[1]) *100:.2f}%), Intercept: {params[0]:.2g} ± {param_uncertainties[0]:.2g} ({param_uncertainties[0] / params[0] *100:.2f})%")
             fit_y = params[1]*fit_x + params[0]
+
+            ann.visible = True
+            ann.text = f'''
+                <p style="color:black;">
+                <b>Fit Parameters:</b><br>
+                Slope: {params[1]:.2g} ± {param_uncertainties[1]:.2g} ({np.abs(param_uncertainties[1] / params[1]) *100:.2f}%) <br>
+                Intercept: {params[0]:.2g} ± {param_uncertainties[0]:.2g} ({np.abs(param_uncertainties[0] / params[0]) *100:.2f}%)</p>'''
 
         '''
            If user has chosen exp decay model, it might not find a fit.
@@ -722,12 +853,24 @@ def runDRS():
 
             try:
                 params, cov = curve_fit(f, sigs_array, devs_array)
-                print(f"Here are the fit params: {params}")
+                # Get param uncertainties from covariance matrix
+                param_uncertainties = np.sqrt(np.diag(cov))
+
+                print(f"Here are the fit params: {params} and uncertainties: {param_uncertainties}")
                 fit_y = params[0] + params[1] * np.exp(-params[2] * fit_x)
+
+                ann.visible = True
+                ann.text = f'''
+                    <p style="color:black;">
+                    <b>Fit Parameters:</b><br>
+                    Offset (a): {params[0]:.6f} <br>
+                    Amplitude (b): {params[1]:.7f} <br>
+                    Decay Rate (c): {params[2]:.7f}</p>'''
 
             except RuntimeError as e:
                 if 'Optimal parameters not found: Number of calls' in str(e):
 
+                    print('Could not find fit to data with Exp model. Switching to Linear model.')
                     IoLog.warning('Could not find fit to data with Exp model. Switching to Linear model.')
 
                     settings['CaPOEqType'] = 'Linear'
@@ -736,9 +879,19 @@ def runDRS():
                         return a + b*x
 
                     params, cov = curve_fit(fitFunc, sigs_array, devs_array, ftol=1e-5)
+                    # Get param uncertainties from covariance matrix
+                    param_uncertainties = np.sqrt(np.diag(cov))
+                    param_covariances = cov[0, 1] #With just two parameters, the covariance matrix is 2x2, so the off-diagonal element is cov[0,1] (or cov[1,0])
 
-                    print(f"Here are the fit params: Slope: {params[1]}, Intercept: {params[0]}")
+                    print(f"Here are the fit params: Slope: {params[1]:.2g} ± {param_uncertainties[1]:.2g} ({param_uncertainties[1] / params[1] *100:.2f}%), Intercept: {params[0]:.2g} ± {param_uncertainties[0]:.2g} ({param_uncertainties[0] / params[0] *100:.2f}%)")
                     fit_y = params[1]*fit_x + params[0]
+
+                    ann.visible = True
+                    ann.text = f'''
+                        <p style="color:black;">
+                        <b>Fit Parameters:</b><br>
+                        Slope: {params[1]:.2g} ± {param_uncertainties[1]:.2g} ({param_uncertainties[1] / params[1] *100:.2f}%) <br>
+                        Intercept: {params[0]:.2g} ± {param_uncertainties[0]:.2g} ({param_uncertainties[0] / params[0] *100:.2f}%)</p>'''
                 else:
                     raise
 
@@ -749,28 +902,52 @@ def runDRS():
         g.pen = fit_pen
         g.setData(fit_x, fit_y)
 
-        ann.visible = True
-        ann.text = f'''
-            <p style="color:black;">
-            <b>Fit Parameters:</b><br>
-            Slope: {params[1]:.7f} <br>
-            Intercept: {params[0]:.6f}</p>'''
-
         PLOT.left().label = '87Sr/86Sr Deviation (meas/true)'
         PLOT.bottom().label = 'Total Sr (V)'
         PLOT.setToolsVisible(False)
         PLOT.rescaleAxes()
         PLOT.replot()
 
-        if settings['CaPOEqType'] == 'Linear':
+        if settings['CaPOEqType'] == 'Linear' and len(params) == 2:
             CaPO_corrAmt = totalSrBeam * params[1] + params[0]
-        else:
+        elif settings['CaPOEqType'] == 'Exponential Decay' and len(params) == 3:
             CaPO_corrAmt = params[0] + params[1] * np.exp(-params[2] * totalSrBeam)
+        else:
+            IoLog.error("Could not calculate CaPO correction. Check the fit parameters.")
+            drs.message("DRS did not finish. Please check Messages")
+            drs.progress(100)
+            drs.finished()
+            return
 
         data.createTimeSeries('CaPO_corrAmt', data.Output, indexChannel.time(), CaPO_corrAmt)
 
         CaPOCorr_Sr8786 = StdCorrRb_Sr87_86 / CaPO_corrAmt
         data.createTimeSeries('CaPOCorr_Sr8786', data.Output, indexChannel.time(), CaPOCorr_Sr8786)
+
+        # Store the parameters and their uncertainties in the CaPOCorr_Sr8786 channel (as properties) for later use
+        CaPOCorr_tsd = data.timeSeries('CaPOCorr_Sr8786') # Get reference to channel here
+
+        if settings['CaPOEqType'] == 'Linear' and len(params) == 2:
+            CaPOCorr_tsd.setProperty('CaPO_fit_type', 'Linear')
+            CaPOCorr_tsd.setProperty('CaPO_fit_intercept', params[0])
+            CaPOCorr_tsd.setProperty('CaPO_fit_slope', params[1])
+            CaPOCorr_tsd.setProperty('CaPO_fit_intercept_uncertainty', param_uncertainties[0])
+            CaPOCorr_tsd.setProperty('CaPO_fit_slope_uncertainty', param_uncertainties[1])
+            CaPOCorr_tsd.setProperty('CaPO_fit_covariance', param_covariances)
+
+        elif settings['CaPOEqType'] == 'Exponential Decay' and len(params) == 3:
+            CaPOCorr_tsd = data.timeSeries('CaPOCorr_Sr8786')
+            CaPOCorr_tsd.setProperty('CaPO_fit_type', 'Exponential Decay')
+            CaPOCorr_tsd.setProperty('CaPO_fit_offset', params[0])
+            CaPOCorr_tsd.setProperty('CaPO_fit_amplitude', params[1])
+            CaPOCorr_tsd.setProperty('CaPO_fit_decay_rate', params[2])
+            CaPOCorr_tsd.setProperty('CaPO_fit_offset_uncertainty', param_uncertainties[0])
+            CaPOCorr_tsd.setProperty('CaPO_fit_amplitude_uncertainty', param_uncertainties[1])
+            CaPOCorr_tsd.setProperty('CaPO_fit_decay_rate_uncertainty', param_uncertainties[2])
+        else:
+            IoLog.error("Could not store CaPO correction parameters. Check the fit parameters.")
+
+        data.registerAssociatedResult("CaPOCorr_Sr8786_propUncert", addCaPOUncertsInQuadrature)
 
     else:
         print("No CaPO correction invoked (no selected RMs)")
@@ -783,6 +960,94 @@ def runDRS():
     drs.message("Finished!")
     drs.progress(100)
     drs.finished()
+
+
+class CheckableTabWidget(QTabWidget):
+    tabCheckStateChanged = Signal(int, bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._checkboxes = {}
+
+    def addCheckableTab(
+        self,
+        widget: QWidget,
+        label: str,
+        checked: bool = False,
+    ) -> int:
+        index = self.addTab(widget, "")
+
+        # Container shown inside the tab
+        tab_widget = QWidget()
+
+        layout = QHBoxLayout(tab_widget)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+
+        checkbox = QCheckBox()
+        checkbox.setChecked(checked)
+
+        text = QLabel(label)
+
+        layout.addWidget(checkbox)
+        layout.addWidget(text)
+
+        # Prevent the widget from expanding oddly
+        tab_widget.setSizePolicy(
+            QSizePolicy.Minimum,
+            QSizePolicy.Minimum,
+        )
+
+        self.tabBar().setTabButton(
+            index,
+            QTabBar.LeftSide,
+            tab_widget,
+        )
+
+        self._checkboxes[index] = checkbox
+
+        checkbox.toggled.connect(
+            lambda state, i=index: self.tabCheckStateChanged.emit(i, state)
+        )
+
+        return index
+
+    def addNormalTab(self, widget, label):
+        index = self.addTab(widget, "")
+
+        # Container shown inside the tab
+        tab_widget = QWidget()
+
+        layout = QHBoxLayout(tab_widget)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+
+        text = QLabel(label)
+
+        layout.addWidget(text)
+
+        # Prevent the widget from expanding oddly
+        tab_widget.setSizePolicy(
+            QSizePolicy.Minimum,
+            QSizePolicy.Minimum,
+        )
+
+        self.tabBar().setTabButton(
+            index,
+            QTabBar.LeftSide,
+            tab_widget,
+        )
+
+        self._checkboxes[index] = None
+
+        return index
+
+    def isTabChecked(self, index: int) -> bool:
+        return self._checkboxes[index].isChecked()
+
+    def setTabChecked(self, index: int, checked: bool):
+        self._checkboxes[index].setChecked(checked)
 
 
 def settingsWidget():
@@ -804,40 +1069,42 @@ def settingsWidget():
     elif timeSeriesNames:
         defaultChannelName = timeSeriesNames[0]
 
-    drs.setSetting("IndexChannel", defaultChannelName)
-    drs.setSetting("ReferenceMaterial", "CO3_shell")
-    drs.setSetting("Mask", True)
-    drs.setSetting("MaskChannel", defaultChannelName)
-    drs.setSetting("MaskCutoff", 0.05)
-    drs.setSetting("MaskTrim", 0.0)
-    drs.setSetting("Rb_Beta_adjust", False)
-    drs.setSetting("RbBias", 1.)
-    drs.setSetting("ReferenceMaterialRb", "G_BCR2G")
-    drs.setSetting("Rb_Sr_elemental", False)
-    drs.setSetting("Rb_Sr_fract", 1.)
-    drs.setSetting("ReferenceMaterialRbSr", "G_BCR2G")
-    drs.setSetting("Age", 0.)
-    drs.setSetting("Dy_Er", 1.5)
-    drs.setSetting("Lu_Yb", 0.15)
-    drs.setSetting("ProportionCaAr", 1.)
-    drs.setSetting("ProportionNaNi", 1.)
-    drs.setSetting("Sr88_86_reference", 8.37520938)  #Konter & Storm (2014)
-    drs.setSetting("Rb87_85_reference", 0.385710)    #Konter & Storm (2014)
-    drs.setSetting("REE_subtract", False)
-    drs.setSetting("REEBias", 1.)
-    drs.setSetting("CaAr_CaCa_subtract", False)
-    drs.setSetting("CaAr_83", False)
-    drs.setSetting("CaArBias", 1.)
-    drs.setSetting("NaNi_CaAlO_subtract", False)
-    drs.setSetting("NaNiBias", 1.)
-    drs.setSetting("CaPOEqType", 'Linear')
-    drs.setSetting("CaPO_RMs", [])
-    drs.setSetting("PropagateError", False)
+    drs.setDefaultSetting("IndexChannel", defaultChannelName)
+    drs.setDefaultSetting("ReferenceMaterial", "CO3_shell")
+    drs.setDefaultSetting("Mask", True)
+    drs.setDefaultSetting("MaskChannel", defaultChannelName)
+    drs.setDefaultSetting("MaskCutoff", 0.05)
+    drs.setDefaultSetting("MaskTrim", 0.0)
+    drs.setDefaultSetting("Rb_Beta_adjust", False)
+    drs.setDefaultSetting("RbBias", 1.)
+    drs.setDefaultSetting("ReferenceMaterialRb", "G_BCR2G")
+    drs.setDefaultSetting("Rb_Sr_elemental", False)
+    drs.setDefaultSetting("Rb_Sr_fract", 1.)
+    drs.setDefaultSetting("ReferenceMaterialRbSr", "G_BCR2G")
+    drs.setDefaultSetting("Age", 0.)
+    drs.setDefaultSetting("Dy_Er", 1.5)
+    drs.setDefaultSetting("Lu_Yb", 0.15)
+    drs.setDefaultSetting("ProportionCaAr", 1.)
+    drs.setDefaultSetting("ProportionNaNi", 1.)
+    drs.setDefaultSetting("Sr88_86_reference", 8.37520938)  #Konter & Storm (2014)
+    drs.setDefaultSetting("Rb87_85_reference", 0.385710)    #Konter & Storm (2014)
+    drs.setDefaultSetting("REE_subtract", False)
+    drs.setDefaultSetting("REEBias", 1.)
+    drs.setDefaultSetting("CaAr_CaCa_subtract", False)
+    drs.setDefaultSetting("CaAr_83", False)
+    drs.setDefaultSetting("CaArBias", 1.)
+    drs.setDefaultSetting("NaNi_CaAlO_subtract", False)
+    drs.setDefaultSetting("NaNiBias", 1.)
+    drs.setDefaultSetting("CaPOEqType", 'Linear')
+    drs.setDefaultSetting("CaPO_RMs", [])
+    drs.setDefaultSetting("PropagateError", False)
+    drs.setDefaultSetting("SplitStreamInstrument", "")
 
     settings = drs.settings()
 
     DRS_message = QtGui.QLabel("This DRS requires data at least 86.5 and 83.5 half-masses for the REE subtraction (also 87.5 and 81.5 for direct 176Lu++ and 164Dy++ correction), mass 82 or 83 for the CaAr-CaCa subtraction, and mass 83 for the NaNi-CaAlO subtraction.\nIf you did not collect data for these channels, do not check the corresponding boxes. Otherwise you will get an error message.")
     DRS_message.setStyleSheet('color:yellow')
+    DRS_message.setWordWrap(True)
     formLayout.addRow(DRS_message)
 
     verticalSpacer = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
@@ -845,16 +1112,23 @@ def settingsWidget():
 
     indexComboBox = QtGui.QComboBox(widget)
     indexComboBox.addItems(timeSeriesNames)
+    indexComboBox.setEditable(True)
     indexComboBox.setCurrentText(settings["IndexChannel"])
     indexComboBox.textActivated.connect(lambda t: drs.setSetting("IndexChannel", t))
+    indexComboBox.editTextChanged.connect(lambda t: drs.setSetting("IndexChannel", t))
     formLayout.addRow("Index channel", indexComboBox)
 
-    def updateIndexCombo():
-        timeSeriesNames = data.timeSeriesNames(data.Input)
-        indexComboBox.clear()
-        indexComboBox.addItems(timeSeriesNames)
+    def updateChannelCombo(combo_box):
+        try:
+            current_text = combo_box.currentText
+            timeSeriesNames = data.timeSeriesNames(data.Input)
+            combo_box.clear()
+            combo_box.addItems(timeSeriesNames)
+            combo_box.setCurrentText(current_text)
+        except Exception as e:
+            print(f"There was a problem updating channel combobox: {e}")
 
-    data.dataChanged.connect(updateIndexCombo)
+    data.dataChanged.connect(lambda: updateChannelCombo(indexComboBox))
 
     rmComboBox = QtGui.QComboBox(widget)
     rmNames = data.referenceMaterialNames()
@@ -869,171 +1143,20 @@ def settingsWidget():
     formLayout.addRow("Reference material", rmComboBox)
 
     def updateRMCombo():
-        rmNames = data.selectionGroupNames(data.ReferenceMaterial)
-        rmComboBox.clear()
-        rmComboBox.addItems(rmNames)
-        drs.setSetting("ReferenceMaterial", rmComboBox.currentText())
+        try:
+            rmNames = data.selectionGroupNames(data.ReferenceMaterial)
+            rmComboBox.clear()
+            rmComboBox.addItems(rmNames)
+            rmComboBox.setCurrentIndex(rmComboBox.findText(drs.setting("ReferenceMaterial")))
+        except Exception as e:
+            print(f"There was a problem updating RM combobox: {e}")
 
     data.selectionGroupsChanged.connect(updateRMCombo)
-
-    verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer2)
-
-    maskCheckBox = QtGui.QCheckBox(widget)
-    maskCheckBox.setChecked(settings["Mask"])
-    maskCheckBox.toggled.connect(lambda t: drs.setSetting("Mask", bool(t)))
-    formLayout.addRow("Mask", maskCheckBox)
-
-    maskComboBox = QtGui.QComboBox(widget)
-    maskComboBox.addItems(data.timeSeriesNames(data.Input))
-    maskComboBox.setCurrentText(settings["MaskChannel"])
-    maskComboBox.currentTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
-    formLayout.addRow("Mask channel", maskComboBox)
-
-    maskLineEdit = QtGui.QLineEdit(widget)
-    maskLineEdit.setText(settings["MaskCutoff"])
-    maskLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskCutoff", float(t)))
-    formLayout.addRow("Mask cutoff", maskLineEdit)
-
-    maskTrimLineEdit = QtGui.QLineEdit(widget)
-    maskTrimLineEdit.setText(settings["MaskTrim"])
-    maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
-    formLayout.addRow("Mask trim", maskTrimLineEdit)
-
-    verticalSpacer3 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer3)
-
-    REECheckBox = QtGui.QCheckBox(widget)
-    REECheckBox.setChecked(settings["REE_subtract"])
-    REECheckBox.toggled.connect(lambda t: drs.setSetting("REE_subtract", bool(t)))
-    formLayout.addRow("REE subtraction?", REECheckBox)
-
-    dyErLineEdit = QtGui.QLineEdit(widget)
-    dyErLineEdit.setText(settings["Dy_Er"])
-    dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
-    formLayout.addRow("Dy/Er ratio (default is approximately chondritic)", dyErLineEdit)
-
-    LuYbLineEdit = QtGui.QLineEdit(widget)
-    LuYbLineEdit.setText(settings["Lu_Yb"])
-    LuYbLineEdit.textChanged.connect(lambda t: drs.setSetting("Lu_Yb", float(t)))
-    formLayout.addRow("Lu/Yb ratio (default is approximately chondritic)", LuYbLineEdit)
-
-    REEBiasLineEdit = QtGui.QLineEdit(widget)
-    REEBiasLineEdit.setText(settings["REEBias"])
-    REEBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("REEBias", float(t)))
-    formLayout.addRow("Scale REE Beta (1 = BetaSr)", REEBiasLineEdit)
-
-    verticalSpacer4 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer4)
-
-    CaArCheckBox = QtGui.QCheckBox(widget)
-    CaArCheckBox.setChecked(settings["CaAr_CaCa_subtract"])
-    CaArCheckBox.toggled.connect(lambda t: drs.setSetting("CaAr_CaCa_subtract", bool(t)))
-    formLayout.addRow("CaAr-CaCa subtraction?", CaArCheckBox)
-
-    CaAr83CheckBox = QtGui.QCheckBox(widget)
-    CaAr83CheckBox.setChecked(settings["CaAr_83"])
-    CaAr83CheckBox.toggled.connect(lambda t: drs.setSetting("CaAr_83", bool(t)))
-    formLayout.addRow("Use 83(CaAr,CaCa) as monitor? (uses 82 as default otherwise)", CaAr83CheckBox)
-
-    CaArLineEdit = QtGui.QLineEdit(widget)
-    CaArLineEdit.setText(settings["ProportionCaAr"])
-    CaArLineEdit.textChanged.connect(lambda t: drs.setSetting("ProportionCaAr", float(t)))
-    formLayout.addRow("Proportion CaAr (0 to 1)", CaArLineEdit)
-
-    CaArBiasLineEdit = QtGui.QLineEdit(widget)
-    CaArBiasLineEdit.setText(settings["CaArBias"])
-    CaArBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("CaArBias", float(t)))
-    formLayout.addRow("Scale CaAr-CaCa Beta (1 = BetaSr)", CaArBiasLineEdit)
-
-    verticalSpacer5 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer5)
-
-    NaNiCheckBox = QtGui.QCheckBox(widget)
-    NaNiCheckBox.setChecked(settings["NaNi_CaAlO_subtract"])
-    NaNiCheckBox.toggled.connect(lambda t: drs.setSetting("NaNi_CaAlO_subtract", bool(t)))
-    formLayout.addRow("NaNi-CaAlO subtraction?", NaNiCheckBox)
-
-    NaNiLineEdit = QtGui.QLineEdit(widget)
-    NaNiLineEdit.setText(settings["ProportionNaNi"])
-    NaNiLineEdit.textChanged.connect(lambda t: drs.setSetting("ProportionNaNi", float(t)))
-    formLayout.addRow("Proportion NaNi (0 to 1)", NaNiLineEdit)
-
-    NaNiBiasLineEdit = QtGui.QLineEdit(widget)
-    NaNiBiasLineEdit.setText(settings["NaNiBias"])
-    NaNiBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("NaNiBias", float(t)))
-    formLayout.addRow("Scale NaNi-CaAlO Beta (1 = BetaSr)", NaNiBiasLineEdit)
-
-    verticalSpacer6 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer6)
-
-    RbBetaCheckBox = QtGui.QCheckBox(widget)
-    RbBetaCheckBox.setChecked(settings["Rb_Beta_adjust"])
-    RbBetaCheckBox.toggled.connect(lambda t: drs.setSetting("Rb_Beta_adjust", bool(t)))
-    formLayout.addRow("Rb Beta adjust?", RbBetaCheckBox)
-
-    RbrmComboBox = QtGui.QComboBox(widget)
-    RbrmComboBox.addItems(rmNames)
-    RbrmComboBox.setCurrentText(settings["ReferenceMaterialRb"])
-    RbrmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterialRb", t))
-    formLayout.addRow("Reference material Rb beta", RbrmComboBox)
-
-    RbBiasLineEdit = QtGui.QLineEdit(widget)
-    RbBiasLineEdit.setText(settings["RbBias"])
-    RbBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("RbBias", float(t)))
-    formLayout.addRow("Scale Rb Beta (if Rb Beta adjust unchecked; 1 = BetaSr)", RbBiasLineEdit)
-
-    verticalSpacer7 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer7)
-
-    RbSrCheckBox = QtGui.QCheckBox(widget)
-    RbSrCheckBox.setChecked(settings["Rb_Sr_elemental"])
-    RbSrCheckBox.toggled.connect(lambda t: drs.setSetting("Rb_Sr_elemental", bool(t)))
-    formLayout.addRow("Rb-Sr fractionation?", RbSrCheckBox)
-
-    RbSrrmComboBox = QtGui.QComboBox(widget)
-    RbSrrmComboBox.addItems(rmNames)
-    RbSrrmComboBox.setCurrentText(settings["ReferenceMaterialRbSr"])
-    RbSrrmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterialRbSr", t))
-    formLayout.addRow("Reference material Rb/Sr fractionation", RbSrrmComboBox)
-
-    RbSrLineEdit = QtGui.QLineEdit(widget)
-    RbSrLineEdit.setText(settings["Rb_Sr_fract"])
-    RbSrLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb_Sr_fract", float(t)))
-    formLayout.addRow("Scale Rb/Sr (if no Rb/Sr standard)", RbSrLineEdit)
-
-
-    verticalSpacer8 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer8)
-
 
     ageLineEdit = QtGui.QLineEdit(widget)
     ageLineEdit.setText(settings["Age"])
     ageLineEdit.textChanged.connect(lambda t: drs.setSetting("Age", float(t)))
     formLayout.addRow("Age (Ma)", ageLineEdit)
-
-
-    verticalSpacer9 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer9)
-
-    # CaPO controls
-    capoEqType = QtGui.QComboBox(widget)
-    capoEqType.addItems(['Linear', 'Exponential Decay'])
-    capoEqType.setCurrentText(settings["CaPOEqType"])
-    capoEqType.currentTextChanged.connect(lambda t: drs.setSetting("CaPOEqType", t))
-    formLayout.addRow("CaPO Fit Eqn", capoEqType)
-
-    setExtButton = QtGui.QToolButton(widget)
-    rmMenu = ReferenceMaterialsMenu(setExtButton)
-    rmMenu.rmsChanged.connect(lambda l: drs.setSetting("CaPO_RMs", l))
-    setExtButton.setMenu(rmMenu)
-    setExtButton.setPopupMode(QtGui.QToolButton.InstantPopup)
-    setExtButton.setIcon(CUI().icon('trophy'))
-    setExtButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-    formLayout.addRow("RMs for CaPO correction:", setExtButton)
-
-    # Plot for CaPO correction
-    formLayout.addRow('CaPO Correction fit', PLOT)
 
     # Prop errors controls
     propCheckBox = QtGui.QCheckBox(widget)
@@ -1041,14 +1164,198 @@ def settingsWidget():
     propCheckBox.toggled.connect(lambda t: drs.setSetting("PropagateError", bool(t)))
     formLayout.addRow("Propagate Errors?", propCheckBox)
 
+    verticalSpacer2 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer2)
 
-    # Restore settings
-    try:
-        settings = drs.settings()
-        print('Restoring settings...')
-        print(settings)
-        rmComboBox.setCurrentText(settings["ReferenceMaterial"])
-    except KeyError:
-        pass
+    tab_widget = CheckableTabWidget(widget)
+    tab_widget.setTabPosition(QTabWidget.West)
+    formLayout.addRow(tab_widget)
+
+    def make_mask():
+        mask_widget = QWidget(widget)
+        mask_widget.setLayout(QFormLayout())
+
+        maskChannelComboBox = QtGui.QComboBox(mask_widget)
+        updateChannelCombo(maskChannelComboBox)
+        maskChannelComboBox.setEditable(True)
+        maskChannelComboBox.setCurrentText(drs.setting("MaskChannel"))
+        maskChannelComboBox.textActivated.connect(lambda t: drs.setSetting("MaskChannel", t))
+        maskChannelComboBox.editTextChanged.connect(lambda t: drs.setSetting("MaskChannel", t))
+        data.dataChanged.connect(lambda: updateChannelCombo(maskChannelComboBox))
+        mask_widget.layout().addRow("Mask channel", maskChannelComboBox)
+
+        maskLineEdit = QtGui.QLineEdit(mask_widget)
+        maskLineEdit.setText(settings["MaskCutoff"])
+        maskLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskCutoff", float(t)))
+        mask_widget.layout().addRow("Mask cutoff", maskLineEdit)
+
+        maskTrimLineEdit = QtGui.QLineEdit(mask_widget)
+        maskTrimLineEdit.setText(settings["MaskTrim"])
+        maskTrimLineEdit.textChanged.connect(lambda t: drs.setSetting("MaskTrim", float(t)))
+        mask_widget.layout().addRow("Mask trim", maskTrimLineEdit)
+
+        return mask_widget
+
+    tab_widget.addCheckableTab(make_mask(), "Mask", drs.settings()["Mask"])
+
+    def make_ree():
+        ree_widget = QWidget(widget)
+        ree_widget.setLayout(QFormLayout())
+
+        dyErLineEdit = QtGui.QLineEdit(ree_widget)
+        dyErLineEdit.setText(settings["Dy_Er"])
+        dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
+        ree_widget.layout().addRow("Dy/Er ratio (default is approximately chondritic)", dyErLineEdit)
+
+        LuYbLineEdit = QtGui.QLineEdit(ree_widget)
+        LuYbLineEdit.setText(settings["Lu_Yb"])
+        LuYbLineEdit.textChanged.connect(lambda t: drs.setSetting("Lu_Yb", float(t)))
+        ree_widget.layout().addRow("Lu/Yb ratio (default is approximately chondritic)", LuYbLineEdit)
+
+        REEBiasLineEdit = QtGui.QLineEdit(ree_widget)
+        REEBiasLineEdit.setText(settings["REEBias"])
+        REEBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("REEBias", float(t)))
+        ree_widget.layout().addRow("Scale REE Beta (1 = BetaSr)", REEBiasLineEdit)
+
+        return ree_widget
+
+    tab_widget.addCheckableTab(make_ree(), "REE Correction", drs.settings()["REE_subtract"])
+
+    def make_caar():
+        caar_widget = QWidget(widget)
+        caar_widget.setLayout(QFormLayout())
+
+        CaAr83CheckBox = QtGui.QCheckBox(caar_widget)
+        CaAr83CheckBox.setChecked(settings["CaAr_83"])
+        CaAr83CheckBox.toggled.connect(lambda t: drs.setSetting("CaAr_83", bool(t)))
+        caar_widget.layout().addRow("Use 83(CaAr,CaCa) as monitor? (uses 82 as default otherwise)", CaAr83CheckBox)
+
+        CaArLineEdit = QtGui.QLineEdit(caar_widget)
+        CaArLineEdit.setText(settings["ProportionCaAr"])
+        CaArLineEdit.textChanged.connect(lambda t: drs.setSetting("ProportionCaAr", float(t)))
+        caar_widget.layout().addRow("Proportion CaAr (0 to 1)", CaArLineEdit)
+
+        CaArBiasLineEdit = QtGui.QLineEdit(caar_widget)
+        CaArBiasLineEdit.setText(settings["CaArBias"])
+        CaArBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("CaArBias", float(t)))
+        caar_widget.layout().addRow("Scale CaAr-CaCa Beta (1 = BetaSr)", CaArBiasLineEdit)
+
+        return caar_widget
+
+    tab_widget.addCheckableTab(make_caar(), "CaAr Correction", drs.settings()["CaAr_CaCa_subtract"])
+
+    def make_nani():
+        nani_widget = QWidget(widget)
+        nani_widget.setLayout(QFormLayout())
+
+        NaNiLineEdit = QtGui.QLineEdit(nani_widget)
+        NaNiLineEdit.setText(settings["ProportionNaNi"])
+        NaNiLineEdit.textChanged.connect(lambda t: drs.setSetting("ProportionNaNi", float(t)))
+        nani_widget.layout().addRow("Proportion NaNi (0 to 1)", NaNiLineEdit)
+
+        NaNiBiasLineEdit = QtGui.QLineEdit(nani_widget)
+        NaNiBiasLineEdit.setText(settings["NaNiBias"])
+        NaNiBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("NaNiBias", float(t)))
+        nani_widget.layout().addRow("Scale NaNi-CaAlO Beta (1 = BetaSr)", NaNiBiasLineEdit)
+
+        return nani_widget
+
+    tab_widget.addCheckableTab(make_nani(), "NaNi Correction", drs.settings()["NaNi_CaAlO_subtract"])
+
+    def make_rbbeta():
+        rbbeta_widget = QWidget(widget)
+        rbbeta_widget.setLayout(QFormLayout())
+
+        RbrmComboBox = QtGui.QComboBox(rbbeta_widget)
+        RbrmComboBox.addItems(rmNames)
+        RbrmComboBox.setCurrentText(settings["ReferenceMaterialRb"])
+        RbrmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterialRb", t))
+        rbbeta_widget.layout().addRow("Reference material Rb beta", RbrmComboBox)
+
+        RbBiasLineEdit = QtGui.QLineEdit(rbbeta_widget)
+        RbBiasLineEdit.setText(settings["RbBias"])
+        RbBiasLineEdit.textChanged.connect(lambda t: drs.setSetting("RbBias", float(t)))
+        rbbeta_widget.layout().addRow("Scale Rb Beta (if Rb Beta adjust unchecked; 1 = BetaSr)", RbBiasLineEdit)
+
+        return rbbeta_widget
+
+    tab_widget.addCheckableTab(make_rbbeta(), "Rb Beta Adjust", drs.settings()["Rb_Beta_adjust"])
+
+    def make_rbsr():
+        rbsr_widget = QWidget(widget)
+        rbsr_widget.setLayout(QFormLayout())
+
+        RbSrrmComboBox = QtGui.QComboBox(rbsr_widget)
+        RbSrrmComboBox.addItems(rmNames)
+        RbSrrmComboBox.setCurrentText(settings["ReferenceMaterialRbSr"])
+        RbSrrmComboBox.currentTextChanged.connect(lambda t: drs.setSetting("ReferenceMaterialRbSr", t))
+        rbsr_widget.layout().addRow("Reference material Rb/Sr fractionation", RbSrrmComboBox)
+
+        RbSrLineEdit = QtGui.QLineEdit(rbsr_widget)
+        RbSrLineEdit.setText(settings["Rb_Sr_fract"])
+        RbSrLineEdit.textChanged.connect(lambda t: drs.setSetting("Rb_Sr_fract", float(t)))
+        rbsr_widget.layout().addRow("Scale Rb/Sr (if no Rb/Sr standard)", RbSrLineEdit)
+
+        return rbsr_widget
+
+    tab_widget.addCheckableTab(make_rbsr(), "Rb-Sr Fractionation", drs.setting("Rb_Sr_elemental"))
+
+    def on_tab_checked(index, checked):
+        if index == 0:
+            drs.setSetting("Mask", bool(checked))
+        elif index == 1:
+            drs.setSetting("REE_subtract", bool(checked))
+        elif index == 2:
+            drs.setSetting("CaAr_CaCa_subtract", bool(checked))
+        elif index == 3:
+            drs.setSetting("NaNi_CaAlO_subtract", bool(checked))
+        elif index == 4:
+            drs.setSetting("Rb_Beta_adjust", bool(checked))
+        elif index == 5:
+            drs.setSetting("Rb_Sr_elemental", bool(checked))
+
+    tab_widget.tabCheckStateChanged.connect(on_tab_checked)
+
+    def make_capo():
+        # CaPO controls
+        capo_widget = QWidget(widget)
+        capo_widget.setLayout(QFormLayout())
+
+        capoEqType = QtGui.QComboBox(widget)
+        capoEqType.addItems(['Linear', 'Exponential Decay'])
+        capoEqType.setCurrentText(settings["CaPOEqType"])
+        capoEqType.currentTextChanged.connect(lambda t: drs.setSetting("CaPOEqType", t))
+        capo_widget.layout().addRow("CaPO Fit Eqn", capoEqType)
+
+        setExtButton = QtGui.QToolButton(widget)
+        rmMenu = ReferenceMaterialsMenu(setExtButton)
+        rmMenu.rmsChanged.connect(lambda l: drs.setSetting("CaPO_RMs", l))
+        setExtButton.setMenu(rmMenu)
+        setExtButton.setPopupMode(QtGui.QToolButton.InstantPopup)
+        setExtButton.setIcon(CUI().icon('trophy'))
+        setExtButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        capo_widget.layout().addRow("RMs for CaPO correction:", setExtButton)
+
+        # Plot for CaPO correction
+        capo_widget.layout().addRow('CaPO Correction fit', PLOT)
+
+        return capo_widget
+
+    tab_widget.addNormalTab(make_capo(), "CaPO")
+
+    # Add new normal tab widget for split-stream options
+    def make_split_stream():
+        split_widget = QWidget(widget)
+        split_widget.setLayout(QFormLayout())
+        split_instrumentLineEdit = QtGui.QLineEdit(split_widget)
+        split_instrumentLineEdit.setText(settings["SplitStreamInstrument"])
+        split_instrumentLineEdit.textChanged.connect(lambda t: drs.setSetting("SplitStreamInstrument", t))
+        split_widget.layout().addRow("Split-stream instrument name", split_instrumentLineEdit)
+
+        return split_widget
+    
+    tab_widget.addNormalTab(make_split_stream(), "Split-Stream settings")
 
     drs.setSettingsWidget(widget)
+    IoLog.debug("*** Created Sr settings widget")
+    widget.destroyed.connect(lambda: IoLog.debug("*** Destroying Sr settings widget"))
