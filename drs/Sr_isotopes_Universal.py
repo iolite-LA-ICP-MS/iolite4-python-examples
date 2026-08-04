@@ -132,13 +132,23 @@ def getSelRatioIntensityCorr(sel):
     result = Result()
 
     try:
-        Sr8786_Corr = data.timeSeries("Sr8786_Corr")
-        Rb87AsPPM = data.timeSeries("Rb87asPPM")
+        Sr8786_Corr = data.timeSeries("CaPOCorr_Sr8786")
     except RuntimeError:
+        print('Couldnt get tsd for CaPOCorr_Sr8786. Trying std corrected Sr8786 channel instead.')
+        try:
+            Sr8786_Corr = data.timeSeries("StdCorrRb_Sr87_86")
+        except RuntimeError:
+            print('Couldnt get tsd for Sr8786_Corr')
+            return result
+
+    try:
+        Corr_Rb87 = data.timeSeries("Corr_Rb87")
+    except RuntimeError:
+        print('Couldnt get tsd for Corr_Rb87')
         return result
 
     array_1 = Sr8786_Corr.dataForSelection(sel)
-    array_2 = Rb87AsPPM.dataForSelection(sel)
+    array_2 = Corr_Rb87.dataForSelection(sel)
 
     result.setValue(np.corrcoef(array_1, array_2)[0,1])
     return result
@@ -692,6 +702,7 @@ def runDRS():
         Rb87_Sr86_CorrRb = (Rb87_CorrRb / Sr86_corr) * np.power((Rb87mass / Sr86mass), BetaSr)
 
         data.createTimeSeries('Sr87_86_CorrRb', data.Intermediate, indexChannel.time(), Sr87_86_CorrRb)
+        data.createTimeSeries('Corr_Rb87', data.Intermediate, indexChannel.time(), Rb87_CorrRb)
 
         StdSplineRb_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_CorrRb").data()
         StdCorrRb_Sr87_86 = Sr87_86_CorrRb * StdValue_Sr87_86 / StdSplineRb_Sr87_86
@@ -706,6 +717,7 @@ def runDRS():
         Rb87_Sr86_CorrRb = (Rb87_CorrRb / Sr86_corr) * np.power((Rb87mass / Sr86mass), BetaSr)
 
         data.createTimeSeries('Sr87_86_CorrRb', data.Intermediate, indexChannel.time(), Sr87_86_CorrRb)
+        data.createTimeSeries('Corr_Rb87', data.Intermediate, indexChannel.time(), Rb87_CorrRb)
 
         StdSplineRb_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_CorrRb").data()
         StdCorrRb_Sr87_86 = Sr87_86_CorrRb * StdValue_Sr87_86 / StdSplineRb_Sr87_86
