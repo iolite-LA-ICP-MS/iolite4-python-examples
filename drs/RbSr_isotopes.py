@@ -3,7 +3,7 @@
 #/ Authors: iolite Software
 #/ Description: A basic Rb-Sr isotope DRS, based on that described in Redaa et al. J. Anal. At. Spectrom., 2021, 36, 322
 #/ References: https://doi.org/10.1039/D0JA00299B
-#/ Version: 0.2
+#/ Version: 0.3 (added mass offset setting)
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
@@ -68,6 +68,7 @@ def runDRS():
     maskChannel = data.timeSeries(settings["MaskChannel"])
     cutoff = settings["MaskCutoff"]
     trim = settings["MaskTrim"]
+    massOffset = float(settings["MassOffset"])
 
     # Create debug messages for the settings being used
     IoLog.debug("indexChannelName = %s" % indexChannel.name)
@@ -76,6 +77,7 @@ def runDRS():
     IoLog.debug("maskChannelName = %s" % maskChannel.name)
     IoLog.debug("maskCutoff = %f" % cutoff)
     IoLog.debug("maskTrim = %f" % trim)
+    IoLog.debug("massOffset = %f" % massOffset)
 
     # Setup index time
     drs.message("Setting up index time...")
@@ -141,11 +143,11 @@ def runDRS():
     Rb85_CPS = data.timeSeriesList(
         data.Intermediate, {'Post-shift mass': '85'})[0].data()
     Sr86_102_CPS = data.timeSeriesList(
-        data.Intermediate, {'Post-shift mass': '102'})[0].data()
+        data.Intermediate, {'Post-shift mass': str(round(86.0 + massOffset))})[0].data()
     Sr87_103_CPS = data.timeSeriesList(
-        data.Intermediate, {'Post-shift mass': '103'})[0].data()
+        data.Intermediate, {'Post-shift mass': str(round(87.0 + massOffset))})[0].data()
     Sr88_104_CPS = data.timeSeriesList(
-        data.Intermediate, {'Post-shift mass': '104'})[0].data()
+        data.Intermediate, {'Post-shift mass': str(round(88.0 + massOffset))})[0].data()
 
     Rb87_CPS = Rb85_CPS * 0.38562
     Rb85_Sr86s_Raw = Rb85_CPS/Sr86_102_CPS
@@ -167,6 +169,14 @@ def runDRS():
     drs.progress(80)
 
     print("Correcting ratios here...")
+
+    if rmName not in data.selectionGroupNames(data.ReferenceMaterial):
+        IoLog.error("There is no selection group called " + rmName +
+                      " in the current session. Rb-Sr DRS cannot proceed.")
+        drs.message("Error. See Messages")
+        drs.progress(100)
+        drs.finished()
+        return
 
     StdSpline_Rb87_Sr86s = data.spline(rmName, "Rb87_Sr86s_Raw").data()
     try:
@@ -222,18 +232,17 @@ def settingsWidget():
     """
 
     widget = QtGui.QWidget()
-    formLayout = QtGui.QFormLayout()
-    widget.setLayout(formLayout)
+    vLayout = QtGui.QVBoxLayout()
+    widget.setLayout(vLayout)
 
     timeSeriesNames = data.timeSeriesNames(data.Input)
     defaultChannelName = ""
     if timeSeriesNames:
         defaultChannelName = timeSeriesNames[0]
 
-    rmNames = data.selectionGroupNames(data.ReferenceMaterial)
-
     drs.setSetting("IndexChannel", defaultChannelName)
     drs.setSetting("ReferenceMaterial", "A_MAD")
+    drs.setSetting("MassOffset", 19.0)
     drs.setSetting("Mask", False)
     drs.setSetting("MaskChannel", defaultChannelName)
     drs.setSetting("MaskCutoff", 0.1)
@@ -243,7 +252,24 @@ def settingsWidget():
 
     verticalSpacer = QtGui.QSpacerItem(
         20, 20, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
-    formLayout.addItem(verticalSpacer)
+    vLayout.addItem(verticalSpacer)
+
+    hLayout = QtGui.QHBoxLayout()
+    horizontalSpacer = QtGui.QSpacerItem(
+        40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
+    hLayout.addItem(horizontalSpacer)
+
+    # Settings group box
+    gBox = QtGui.QGroupBox("Settings", widget)
+    formLayout = QtGui.QFormLayout()
+    gBox.setLayout(formLayout)
+    hLayout.addWidget(gBox)
+
+    horizontalSpacer2 = QtGui.QSpacerItem(
+        40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
+    hLayout.addItem(horizontalSpacer2)
+
+    vLayout.addLayout(hLayout)
 
     indexComboBox = QtGui.QComboBox(widget)
     indexComboBox.addItems(timeSeriesNames)
@@ -252,6 +278,7 @@ def settingsWidget():
         lambda t: drs.setSetting("IndexChannel", t))
     formLayout.addRow("Index channel", indexComboBox)
 
+    rmNames = data.referenceMaterialNames()
     rmComboBox = QtGui.QComboBox(widget)
     rmComboBox.addItems(rmNames)
     if settings["ReferenceMaterial"] in rmNames:
@@ -267,6 +294,16 @@ def settingsWidget():
     verticalSpacer = QtGui.QSpacerItem(
         20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
     formLayout.addItem(verticalSpacer)
+
+    massOffsetSpinBox = QtGui.QSpinBox(widget)
+    massOffsetSpinBox.setValue(settings["MassOffset"])
+    massOffsetSpinBox.valueChanged.connect(
+        lambda t: drs.setSetting("MassOffset", float(t)))
+    formLayout.addRow("Mass offset", massOffsetSpinBox)
+
+    verticalSpacer2 = QtGui.QSpacerItem(
+        20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+    formLayout.addItem(verticalSpacer2)
 
     maskCheckBox = QtGui.QCheckBox(widget)
     maskCheckBox.setChecked(settings["Mask"])
@@ -292,8 +329,8 @@ def settingsWidget():
         lambda t: drs.setSetting("MaskTrim", float(t)))
     formLayout.addRow("Mask trim", maskTrimLineEdit)
 
-    verticalSpacer2 = QtGui.QSpacerItem(
+    verticalSpacer3 = QtGui.QSpacerItem(
         20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
-    formLayout.addItem(verticalSpacer2)
+    formLayout.addItem(verticalSpacer3)
 
     drs.setSettingsWidget(widget)
