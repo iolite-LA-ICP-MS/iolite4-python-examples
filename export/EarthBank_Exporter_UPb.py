@@ -15,7 +15,7 @@ from openpyxl import load_workbook
 
 from iolite.Qt import Qt
 from iolite.QtCore import QFile, QIODevice, QEventLoop
-from iolite.QtGui import QComboBox, QHeaderView, QLabel, QLineEdit, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget 
+from iolite.QtGui import QComboBox, QHeaderView, QLabel, QLineEdit, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget, QDoubleSpinBox
 from iolite.QtGui import QCheckBox
 from iolite.QtUiTools import QUiLoader
 
@@ -30,6 +30,12 @@ Variables for your lab.
 '''
 USERS = ['Alan Grieg', 'Ashlea Wainwright', 'Bence Paul', 'Brandon Mahan', 'Janet Hergt', 'Jon Woodhead', 'Roland Maas']
 LAB = 'Isotope Geochemistry,  The University of Melbourne'
+
+LASER_WAVELENGTHS = ['193 nm', '213 nm', '266 nm']
+LASER_PULSE_WIDTHS = ['< 5 ns', '5-10 ns', '> 10 ns']
+CELL_MODEL = ['TV2', 'TV3', 'Helex']
+CARRIER_GAS = ['He', 'Ar', 'N2']
+MIXING_DEVICES = ['Squid', 'ESL Mixing bulb', 'Other']
 
 MULTICOLLECTOR_MACHINE_NAMES = ['Thermo Nepture', 'Neoma', 'Nu Plasma II/III']
 TOF_MACHINE_NAMES = ['Vitesse Text', 'icpTOF']
@@ -82,6 +88,13 @@ class SettingsWidget(QWidget):
         self.groupsTable = ui.findChild(QTableWidget, 'groupsTableWidget')
         self.duplicatesLabel = ui.findChild(QLabel, 'ratiosLabel')
         self.ratiosTable = ui.findChild(QTableWidget, 'ratiosTableWidget')
+        self.laserFluenceDoubleSpinBox = ui.findChild(QDoubleSpinBox, 'laserFluenceDoubleSpinBox')
+        self.laserWavelengthComboBox = ui.findChild(QComboBox, 'laserWavelengthComboBox')
+        self.laserPulseWidthComboBox = ui.findChild(QComboBox, 'laserPulseWidthComboBox')
+        self.cellModelComboBox = ui.findChild(QComboBox, 'cellModelComboBox')
+        self.carrierGasComboBox = ui.findChild(QComboBox, 'carrierGasComboBox')
+        self.carrierGasFlowRateSpinBox = ui.findChild(QDoubleSpinBox, 'carrierGasFlowRateDoubleSpinBox')
+        self.mixingDeviceComboBox = ui.findChild(QComboBox, 'mixingDeviceComboBox')
 
         # Get the valid options from the template file
         template_wb = load_workbook(TEMPLATE_PATH)
@@ -114,12 +127,24 @@ class SettingsWidget(QWidget):
         
         self.techniqueComboBox.addItems(lookup_values['U-Pb Analytical Technique'])
         self.techniqueComboBox.setCurrentText('LA-ICP-MS')
-
         
         self.userComboBox.addItems(USERS)
         self.labLineEdit.setText(LAB)
         self.uncertTypeComboBox.addItems(['2 standard error', '1σ', '2σ', '95%'])
         self.sessionIDComboBox.addItems([data.sessionUUID(), 'File Path'])
+
+        self.laserFluenceDoubleSpinBox.setValue(1.0)
+        self.laserWavelengthComboBox.addItems(LASER_WAVELENGTHS)
+        self.laserWavelengthComboBox.setCurrentText('193 nm')
+        self.laserPulseWidthComboBox.addItems(LASER_PULSE_WIDTHS)
+        self.laserPulseWidthComboBox.setCurrentText('< 5 ns')
+        self.cellModelComboBox.addItems(CELL_MODEL)
+        self.cellModelComboBox.setCurrentText('TV2')
+        self.carrierGasComboBox.addItems(CARRIER_GAS)
+        self.carrierGasComboBox.setCurrentText('He')
+        self.mixingDeviceComboBox.addItems(MIXING_DEVICES)
+        self.mixingDeviceComboBox.setCurrentText('Squid')
+        self.carrierGasFlowRateSpinBox.setValue(1.0)
 
         '''
         Get primary RMs (calibrants) as these should not be included in exported results.
@@ -291,8 +316,6 @@ class SettingsWidget(QWidget):
             if header:
                 icpms_col_indices[header] = col[0].column
 
-        print(f'ICPMS column indices: {icpms_col_indices}')
-
         # Get list of groups to export and their type
         groups_to_export = []
         for row in range(self.groupsTable.rowCount):
@@ -381,8 +404,16 @@ class SettingsWidget(QWidget):
             else:
                 print(f'Not exporting spot size for group {group.name} because there are multiple spot heights reported: {spot_heights} or multiple spot widths reported: {spot_widths}')
 
-            groupCounter += 1
+            # Export other laser metadata
+            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_laserFluence'], value=self.laserFluenceDoubleSpinBox.value)
+            # icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_laserWavelength'], value=self.laserWavelengthComboBox.currentText())
+            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_pulseWidthValue'], value=self.laserPulseWidthComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_cellModel'], value=self.cellModelComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_carrierGas'], value=self.carrierGasComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_mixingDevice'], value=self.mixingDeviceComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_carrierGasFlow'], value=self.carrierGasFlowRateSpinBox.value)
 
+            groupCounter += 1
 
         wb.save(fp)
         # Now use the system open the file in Excel

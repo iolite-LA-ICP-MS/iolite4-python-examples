@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>640</width>
-    <height>300</height>
+    <height>508</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -56,7 +56,7 @@
    <item>
     <widget class="QStackedWidget" name="stackedWidget">
      <property name="currentIndex">
-      <number>0</number>
+      <number>3</number>
      </property>
      <widget class="QWidget" name="userPage">
       <layout class="QVBoxLayout" name="verticalLayout_2">
@@ -120,6 +120,13 @@
          <item row="0" column="1">
           <widget class="QComboBox" name="techniqueComboBox"/>
          </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="mineralLabel">
+           <property name="text">
+            <string>Mineral Type</string>
+           </property>
+          </widget>
+         </item>
          <item row="1" column="1">
           <widget class="QComboBox" name="mineralComboBox"/>
          </item>
@@ -134,35 +141,84 @@
           <widget class="QComboBox" name="uncertaintyTypeComboBox"/>
          </item>
          <item row="3" column="0">
-          <widget class="QLabel" name="trimSigFiguresLabel">
-           <property name="text">
-            <string>Trim Sig Figures?</string>
-           </property>
-          </widget>
-         </item>
-         <item row="3" column="1">
-          <widget class="QCheckBox" name="trimSigFigsCheckBox">
-           <property name="checked">
-            <bool>true</bool>
-           </property>
-          </widget>
-         </item>
-         <item row="4" column="0">
           <widget class="QLabel" name="sessionIDLabel">
            <property name="text">
             <string>BatchID</string>
            </property>
           </widget>
          </item>
-         <item row="4" column="1">
+         <item row="3" column="1">
           <widget class="QComboBox" name="sessionIDComboBox"/>
          </item>
-         <item row="1" column="0">
-          <widget class="QLabel" name="mineralLabel">
+         <item row="4" column="0">
+          <widget class="QLabel" name="laserWavelengthLabel">
            <property name="text">
-            <string>Mineral Type</string>
+            <string>Laser Wavelength (nm)</string>
            </property>
           </widget>
+         </item>
+         <item row="4" column="1">
+          <widget class="QComboBox" name="laserWavelengthComboBox"/>
+         </item>
+         <item row="5" column="0">
+          <widget class="QLabel" name="laserFluenceLabel">
+           <property name="text">
+            <string>Laser Fluence</string>
+           </property>
+          </widget>
+         </item>
+         <item row="5" column="1">
+          <widget class="QDoubleSpinBox" name="laserFluenceDoubleSpinBox"/>
+         </item>
+         <item row="6" column="0">
+          <widget class="QLabel" name="laserPulseWidthLabel">
+           <property name="text">
+            <string>Laser Pulse Width</string>
+           </property>
+          </widget>
+         </item>
+         <item row="6" column="1">
+          <widget class="QComboBox" name="laserPulseWidthComboBox"/>
+         </item>
+         <item row="8" column="0">
+          <widget class="QLabel" name="carrierGasFlowRateLabel">
+           <property name="text">
+            <string>Carrier Gas Flow Rate</string>
+           </property>
+          </widget>
+         </item>
+         <item row="8" column="1">
+          <widget class="QDoubleSpinBox" name="carrierGasFlowRateDoubleSpinBox"/>
+         </item>
+         <item row="9" column="0">
+          <widget class="QLabel" name="cellModelLabel">
+           <property name="text">
+            <string>Cell Model</string>
+           </property>
+          </widget>
+         </item>
+         <item row="9" column="1">
+          <widget class="QComboBox" name="cellModelComboBox"/>
+         </item>
+         <item row="10" column="0">
+          <widget class="QLabel" name="mixingDeviceLabel">
+           <property name="text">
+            <string>Mixing Device</string>
+           </property>
+          </widget>
+         </item>
+         <item row="10" column="1">
+          <widget class="QComboBox" name="mixingDeviceComboBox"/>
+         </item>
+         <item row="7" column="0">
+          <widget class="QLabel" name="carrierGasLabel">
+           <property name="text">
+            <string>Carrier Gas</string>
+           </property>
+          </widget>
+         </item>
+         <item row="7" column="1">
+          <widget class="QComboBox" name="carrierGasComboBox"/>
          </item>
         </layout>
        </item>
