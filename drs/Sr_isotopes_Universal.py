@@ -3,7 +3,7 @@
 #/ Authors: Bence Paul, Joe Petrus, Graham Hagen-Peter, author(s) of Sr_isotopes_Total_NIGL.ipf, and various authors of previous Iolite Sr isotope DRS
 #/ Description: A Sr isotopes DRS that can correct for different combinations of interferences
 #/ References: Mulder et al. (2023) Geostandards and Geolanalytical Research
-#/ Version: 2.0
+#/ Version: 2.1
 #/ Contact: support@iolite-software.com
 
 from iolite import QtGui
@@ -173,8 +173,10 @@ def addCaPOUncertsInQuadrature(sel):
     The final corrected ratio (Y) is then Y = Sr8786_Corr / F, and the uncertainty in Y is calculated as:
     sigma_Y / Y = sqrt((sigma_Sr8786_Corr / Sr8786_Corr)^2 + (sigma_F / F)^2)
 
-    The same goes for the exponential approach, but the uncertainty in F is calculated as:
-    (coming soon)
+    For the exponential model, F = offset + amplitude * exp(-decay_rate * X). Its variance
+    is propagated from the fit parameter covariance matrix and signal uncertainty using
+    Var(F) = grad(F)^T * Cov(parameters) * grad(F) + (dF/dX)^2 * sigma_X^2, where
+    grad(F) = [1, exp(-decay_rate * X), -amplitude * X * exp(-decay_rate * X)].
 
     '''
 
@@ -201,41 +203,75 @@ def addCaPOUncertsInQuadrature(sel):
         Y_array = Y_ch.dataForSelection(sel)
         Y_uncert = np.std(Y_array)
 
-        #Get all the CaPO fit parameters and uncertainties from the CaPOCorr_Sr8786 channel
+        # Get the CaPO fit parameters and propagate their uncertainty.
         fit_type = str(Z_ch.property("CaPO_fit_type"))
-
         if fit_type == "Linear":
             slope = Z_ch.property("CaPO_fit_slope")
             intercept = Z_ch.property("CaPO_fit_intercept")
             slope_uncert = Z_ch.property("CaPO_fit_slope_uncertainty")
             intercept_uncert = Z_ch.property("CaPO_fit_intercept_uncertainty")
             covariance = Z_ch.property("CaPO_fit_covariance")
-
-            # Check for any missing values:
             if None in (slope, intercept, slope_uncert, intercept_uncert, covariance):
                 print(f'Missing fit parameters for selection {sel.name}. Cannot calculate uncertainty.')
                 return result
 
-            # Calculate the uncertainty in the correction using error propagation
             var_F = (
-                (X_mean**2 * slope_uncert**2) +       # Variance of slope (p1)
-                intercept_uncert**2 +                 # Variance of intercept (p0)
-                (slope**2 * X_uncert**2) +              # Variance in totalSrBeam (X)
-                2 * X_mean * covariance               # Covariance of p0 and p1
+                X_mean**2 * slope_uncert**2
+                + intercept_uncert**2
+                + slope**2 * X_uncert**2
+                + 2 * X_mean * covariance
             )
+            F_mean = slope * X_mean + intercept
 
-            sigma_F = np.sqrt(var_F)
-            # Calculate the mean of the correction factor (F_mean)
-            F_mean = (slope * X_mean) + intercept
+        elif fit_type == "Exponential Decay":
+            offset = Z_ch.property("CaPO_fit_offset")
+            amplitude = Z_ch.property("CaPO_fit_amplitude")
+            decay_rate = Z_ch.property("CaPO_fit_decay_rate")
+            offset_uncert = Z_ch.property("CaPO_fit_offset_uncertainty")
+            amplitude_uncert = Z_ch.property("CaPO_fit_amplitude_uncertainty")
+            decay_rate_uncert = Z_ch.property("CaPO_fit_decay_rate_uncertainty")
+            offset_amplitude_covariance = Z_ch.property("CaPO_fit_offset_amplitude_covariance")
+            offset_decay_rate_covariance = Z_ch.property("CaPO_fit_offset_decay_rate_covariance")
+            amplitude_decay_rate_covariance = Z_ch.property("CaPO_fit_amplitude_decay_rate_covariance")
 
-            # Final Step: Combine the random error (Z_uncert) with the systematic model error
-            # Z_mean has already been divided by F_mean point-by-point, so we just combine the relative errors
-            rel_sys_err_sq = (sigma_F / F_mean)**2
-            rel_rnd_err_sq = (Z_uncert / Z_mean)**2
-            
-            # The final total uncertainty for the selection:
-            Z_total_uncert = abs(Z_mean) * np.sqrt(rel_rnd_err_sq + rel_sys_err_sq)
-            Z_stdErr = 2.0 * Z_total_uncert / np.sqrt(len(Z_array))  # Standard error of the mean
+            if None in (
+                offset, amplitude, decay_rate,
+                offset_uncert, amplitude_uncert, decay_rate_uncert,
+                offset_amplitude_covariance, offset_decay_rate_covariance,
+                amplitude_decay_rate_covariance,
+            ):
+                print(f'Missing fit parameters for selection {sel.name}. Cannot calculate uncertainty.')
+                return result
+
+            exp_term = np.exp(-decay_rate * X_mean)
+            dF_damplitude = exp_term
+            dF_ddecay_rate = -amplitude * X_mean * exp_term
+            dF_dsignal = -amplitude * decay_rate * exp_term
+            var_F = (
+                offset_uncert**2
+                + dF_damplitude**2 * amplitude_uncert**2
+                + dF_ddecay_rate**2 * decay_rate_uncert**2
+                + dF_dsignal**2 * X_uncert**2
+                + 2 * dF_damplitude * offset_amplitude_covariance
+                + 2 * dF_ddecay_rate * offset_decay_rate_covariance
+                + 2 * dF_damplitude * dF_ddecay_rate * amplitude_decay_rate_covariance
+            )
+            F_mean = offset + amplitude * exp_term
+    
+        else:
+            print(f'Unsupported CaPO fit type {fit_type!r}. Cannot calculate uncertainty.')
+            return result
+
+        sigma_F = np.sqrt(var_F)
+
+        # Combine random error (Z_uncert) with systematic model error
+        # Z_mean has already been divided by F_mean point-by-point, so combine relative errors
+        rel_sys_err_sq = (sigma_F / F_mean)**2
+        rel_rnd_err_sq = (Z_uncert / Z_mean)**2
+
+        # The final total uncertainty for the selection:
+        Z_total_uncert = abs(Z_mean) * np.sqrt(rel_rnd_err_sq + rel_sys_err_sq)
+        Z_stdErr = 2.0 * Z_total_uncert / np.sqrt(len(Z_array))  # Standard error of the mean
         
     except (RuntimeError, TypeError, ZeroDivisionError) as e:
         # Graceful fallback on error
@@ -277,6 +313,8 @@ def runDRS():
     Ref_Rb_Sr_elemental = settings["ReferenceMaterialRbSr"]
     REE_subtract = settings["REE_subtract"]
     REEBias = settings["REEBias"]
+    Calc_Dy_Er_Linear = settings["Calculate_Dy_Er_Linear"]
+    Calc_Dy_Er_LogLinear = settings["Calculate_Dy_Er_LogLinear"]
     Dy_Er = settings["Dy_Er"]
     Lu_Yb = settings["Lu_Yb"]
     CaAr_CaCa_subtract = settings["CaAr_CaCa_subtract"]
@@ -298,7 +336,9 @@ def runDRS():
     IoLog.debug("Age = %f" % Age)
     IoLog.debug("RbBias = %f" % RbBias)
     IoLog.debug("CaArBias = %f" % CaArBias)
-    IoLog.debug("PropagateErrors = True" if propErrors else "PropagateErrors = False")
+    IoLog.debug(f"PropagateErrors = {'True' if propErrors else 'False'}")
+    IoLog.debug(f"Calculate_Dy_Er_Linear = {'True' if Calc_Dy_Er_Linear else 'False'}")
+    IoLog.debug(f"Calculate_Dy_Er_LogLinear = {'True' if Calc_Dy_Er_LogLinear else 'False'}")
     #IoLog.debug("Corrections selected: " + corrections)
 
     # Setup index time
@@ -462,6 +502,71 @@ def runDRS():
     ##REE plus/minus Ca-Ar-CaCa and/or NaNi-CaAlO subtractions
 
     if REE_subtract:
+        Er_Sr_ppm = (total83_5/0.2293)/(total88/0.8258) * 1e6
+        Yb_Sr_ppm = (total86_5/0.1613)/(total88/0.8258) * 1e6
+        Ho_Sr_ppm = (total82_5/1.0000)/(total88/0.8258) * 1e6
+
+        data.createTimeSeries("Er_Sr_ppm", data.Output, indexChannel.time(), Er_Sr_ppm)
+        data.createTimeSeries("Yb_Sr_ppm", data.Output, indexChannel.time(), Yb_Sr_ppm)
+        data.createTimeSeries("Ho_Sr_ppm", data.Output, indexChannel.time(), Ho_Sr_ppm)
+
+
+        # An array to store our calculated Dy/Er ratios
+        Dy_Er_array = np.ones_like(Ho_Sr_ppm)
+        Dy_Er_array[:] = np.nan  # Initialize with NaN to indicate uncalculated values
+
+        if not Calc_Dy_Er_Linear and not Calc_Dy_Er_LogLinear:
+            print(f"Using constant Dy/Er ratio of {Dy_Er} for all samples.")
+            Dy_Er_array[:] = Dy_Er
+
+        else:
+            '''
+            Calculate Dy/Er ratios for each sample here, based on averages of Ho/Sr and Er/Sr ratios
+            Will use a linear relationship between Dy/Er and Ho/Sr and Er/Sr ratios to calculate Dy/Er for each sample
+            '''
+            print("Calculating Dy/Er ratios for each sample based on Ho/Sr and Er/Sr ratios.")
+            # CI values used:
+            Sr_CI = 7.25
+            Dy_CI = 0.246
+            Ho_CI = 0.0546
+            Er_CI = 0.16
+
+            Ho_Sr_CI = Ho_CI/Sr_CI
+            Er_Sr_CI = Er_CI/Sr_CI
+            Dy_Sr_CI = Dy_CI/Sr_CI
+
+            Er_Sr_ch = data.timeSeries("Er_Sr_ppm")
+            Ho_Sr_ch = data.timeSeries("Ho_Sr_ppm")
+
+            # Get all selections, excluding baselines
+            sgs = data.selectionGroupList(data.ReferenceMaterial | data.Sample)
+            for sg in sgs:
+                for sel in sg.selections():
+                    indices = Ho_Sr_ch.selectionIndices(sel)
+                    Ho_Sr_sel = np.nanmean(Ho_Sr_ch.dataForSelection(sel))
+                    Er_Sr_sel = np.nanmean(Er_Sr_ch.dataForSelection(sel))
+
+                    Ho_Sr_norm = np.nanmean(Ho_Sr_sel/Ho_Sr_CI)
+                    Er_Sr_norm = np.nanmean(Er_Sr_sel/Er_Sr_CI)
+
+                    if Calc_Dy_Er_Linear:
+                        gradient = Er_Sr_norm - Ho_Sr_norm
+                        Dy_Sr_norm = Ho_Sr_norm - gradient
+                        Dy_Sr_denorm = Dy_Sr_norm * Dy_Sr_CI
+                        Dy_Er_calc = Dy_Sr_denorm / Er_Sr_sel
+                    elif Calc_Dy_Er_LogLinear:
+                        gradient = np.log(Er_Sr_norm) - np.log(Ho_Sr_norm)
+                        Dy_Sr_norm = np.log(Ho_Sr_norm) - gradient
+                        Dy_Sr_denorm = np.exp(Dy_Sr_norm) * Dy_Sr_CI
+                        Dy_Er_calc = Dy_Sr_denorm / Er_Sr_sel
+                    else:
+                        print("Neither linear nor log-linear calculation method selected. Using constant Dy/Er ratio.")
+                        Dy_Er_calc = Dy_Er  # Use the constant value if neither calculation method is selected
+
+                    Dy_Er_array[indices] = Dy_Er_calc
+
+        data.createTimeSeries("Dy_Er_calc", data.Output, indexChannel.time(), Dy_Er_array)
+
         residual_86_REE = total86 - ((total86_5 * 21.83 /16.103) / np.power((85.968195 / 86.46911), PFract*REEBias))
 
         try:
@@ -477,7 +582,7 @@ def runDRS():
         except:
             try:
                 IoLog.error("There is no 81.5 channel, so 164Dy++ will be calculated using the monitored 167Er++ on 83.5 and a user-defined Dy/Er. Click OK to proceed.")
-                residual_82_REE = total82 - (total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias) - ((total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias)*(1/0.0161) * Dy_Er * 0.2818)
+                residual_82_REE = total82 - (total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias) - ((total83_5 * 1.61 /22.93) / np.power((81.96460 / 83.46619), PFract_REE*REEBias)*(1/0.0161) * Dy_Er_array * 0.2818)
             except:
                 pass
             pass
@@ -487,13 +592,9 @@ def runDRS():
         except:
             pass
 
-
         residual_84_REE = total84 - ((total83_5 * 26.78 /22.93)/ np.power((83.96619 / 83.46619), PFract_REE*REEBias)-(total86_5 * 0.13 /16.13) / np.power((83.96694 / 86.46911), PFract_REE*REEBias))
         residual_85_REE = total85 - (total86_5 * 3.04 / 16.13) / np.power((84.967385 / 86.46911), PFract_REE*REEBias) - (total83_5 * 14.93 /22.93) / np.power((84.96774 / 83.46619), PFract_REE*REEBias)
         residual_87_REE = total87 - ((total86_5 * 31.83 /16.13) / np.power((86.96943 / 86.46911), PFract_REE*REEBias))
-
-        Er_Sr_ppm = (total83_5/0.2293)/(total88/0.8258) * 1e6
-        Yb_Sr_ppm = (total86_5/0.1613)/(total88/0.8258) * 1e6
 
 
         if CaAr_CaCa_subtract:
@@ -750,8 +851,8 @@ def runDRS():
 
     # Output channels
     try:
-        output_channels_names = ['Er_Sr_ppm','Yb_Sr_ppm','Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
-        output_channels = [Er_Sr_ppm,Yb_Sr_ppm,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorr_Sr87_86,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
+        output_channels_names = ['Er_Sr_ppm','Yb_Sr_ppm','Ho_Sr_ppm','Sr84_86_Corr','Sr84_88_Corr','Rb87_Sr86_final','StdCorr_Sr87_86','StdCorrRb_Sr87_86','Sr87_86_AgeCorr']
+        output_channels = [Er_Sr_ppm,Yb_Sr_ppm,Ho_Sr_ppm,Sr84_86_Corr,Sr84_88_Corr,Rb87_Sr86_final,StdCorr_Sr87_86,StdCorrRb_Sr87_86,Sr87_86_AgeCorr]
         for name, channel in zip(output_channels_names, output_channels):
             data.createTimeSeries(name, data.Output, indexChannel.time(), channel)
 
@@ -845,7 +946,7 @@ def runDRS():
             param_uncertainties = np.sqrt(np.diag(cov))
             param_covariances = cov[0, 1] #With just two parameters, the covariance matrix is 2x2, so the off-diagonal element is cov[0,1] (or cov[1,0])
 
-            print(f"Here are the fit params: Slope: {params[1]:.2g} ± {param_uncertainties[1]:.2g} ({np.abs(param_uncertainties[1] / params[1]) *100:.2f}%), Intercept: {params[0]:.2g} ± {param_uncertainties[0]:.2g} ({param_uncertainties[0] / params[0] *100:.2f})%")
+            print(f"Here are the fit params: Slope: {params[1]:.2g}   {param_uncertainties[1]:.2g} ({np.abs(param_uncertainties[1] / params[1]) *100:.2f}%), Intercept: {params[0]:.2g}   {param_uncertainties[0]:.2g} ({param_uncertainties[0] / params[0] *100:.2f})%")
             fit_y = params[1]*fit_x + params[0]
 
             ann.visible = True
@@ -956,6 +1057,9 @@ def runDRS():
             CaPOCorr_tsd.setProperty('CaPO_fit_offset_uncertainty', param_uncertainties[0])
             CaPOCorr_tsd.setProperty('CaPO_fit_amplitude_uncertainty', param_uncertainties[1])
             CaPOCorr_tsd.setProperty('CaPO_fit_decay_rate_uncertainty', param_uncertainties[2])
+            CaPOCorr_tsd.setProperty('CaPO_fit_offset_amplitude_covariance', cov[0, 1])
+            CaPOCorr_tsd.setProperty('CaPO_fit_offset_decay_rate_covariance', cov[0, 2])
+            CaPOCorr_tsd.setProperty('CaPO_fit_amplitude_decay_rate_covariance', cov[1, 2])
         else:
             IoLog.error("Could not store CaPO correction parameters. Check the fit parameters.")
 
@@ -1094,6 +1198,8 @@ def settingsWidget():
     drs.setDefaultSetting("Rb_Sr_fract", 1.)
     drs.setDefaultSetting("ReferenceMaterialRbSr", "G_BCR2G")
     drs.setDefaultSetting("Age", 0.)
+    drs.setDefaultSetting("Calculate_Dy_Er_Linear", False)
+    drs.setDefaultSetting("Calculate_Dy_Er_LogLinear", False)
     drs.setDefaultSetting("Dy_Er", 1.5)
     drs.setDefaultSetting("Lu_Yb", 0.15)
     drs.setDefaultSetting("ProportionCaAr", 1.)
@@ -1214,10 +1320,49 @@ def settingsWidget():
         ree_widget = QWidget(widget)
         ree_widget.setLayout(QFormLayout())
 
+        dyErLinearCalcCheckBox = QtGui.QCheckBox(ree_widget)
+        dyErLinearCalcCheckBox.setChecked(settings["Calculate_Dy_Er_Linear"])
+
+        dyErLogLinearCalcCheckBox = QtGui.QCheckBox(ree_widget)
+        dyErLogLinearCalcCheckBox.setChecked(settings["Calculate_Dy_Er_LogLinear"])
+        if dyErLinearCalcCheckBox.isChecked() and dyErLogLinearCalcCheckBox.isChecked():
+            dyErLogLinearCalcCheckBox.setChecked(False)
+
         dyErLineEdit = QtGui.QLineEdit(ree_widget)
         dyErLineEdit.setText(settings["Dy_Er"])
         dyErLineEdit.textChanged.connect(lambda t: drs.setSetting("Dy_Er", float(t)))
-        ree_widget.layout().addRow("Dy/Er ratio (default is approximately chondritic)", dyErLineEdit)
+
+        def update_dy_er_mode():
+            linear_enabled = dyErLinearCalcCheckBox.isChecked()
+            log_linear_enabled = dyErLogLinearCalcCheckBox.isChecked()
+            calculation_enabled = linear_enabled or log_linear_enabled
+
+            dyErLineEdit.setEnabled(not calculation_enabled)
+            dyErLineEdit.setStyleSheet("color: #888888;" if calculation_enabled else "")
+            drs.setSetting("Calculate_Dy_Er_Linear", linear_enabled)
+            drs.setSetting("Calculate_Dy_Er_LogLinear", log_linear_enabled)
+
+        def on_linear_toggled(checked):
+            if checked:
+                dyErLogLinearCalcCheckBox.setChecked(False)
+            update_dy_er_mode()
+
+        def on_log_linear_toggled(checked):
+            if checked:
+                dyErLinearCalcCheckBox.setChecked(False)
+            update_dy_er_mode()
+
+        dyErLinearCalcCheckBox.toggled.connect(on_linear_toggled)
+        dyErLogLinearCalcCheckBox.toggled.connect(on_log_linear_toggled)
+
+        ree_widget.layout().addRow("Calculate Dy/Er for each selection using Ho/Sr and Er/Sr (linear)?", dyErLinearCalcCheckBox)
+        ree_widget.layout().addRow("Calculate Dy/Er for each selection using Ho/Sr and Er/Sr (log-linear)?", dyErLogLinearCalcCheckBox)
+        ree_widget.layout().addRow("OR, use fixed Dy/Er ratio (default is approximately chondritic)", dyErLineEdit)
+
+        update_dy_er_mode()
+
+        spacer = QtGui.QSpacerItem(20, 10, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Minimum)
+        ree_widget.layout().addItem(spacer)
 
         LuYbLineEdit = QtGui.QLineEdit(ree_widget)
         LuYbLineEdit.setText(settings["Lu_Yb"])
