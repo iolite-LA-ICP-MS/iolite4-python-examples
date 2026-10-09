@@ -409,22 +409,28 @@ class SettingsWidget(QWidget):
         dps_ws = wb['UPb Datapoints']
         upb_ws = wb['UPbSpotData']
         icpms_ws = wb['ICPMS']
+        agegrp_ws = wb['UPbAgeGroup']
 
         # Get dict of groups to export, with their mount IDs
         groups_to_export = {}
         for row in range(self.groupsTable.rowCount):
             grpName = self.groupsTable.item(row, 0).text()
             if self.groupsTable.item(row, 0).checkState() == Qt.Checked:
-                groups_to_export[grpName] = self.groupsTable.item(row, 5).text() if self.groupsTable.item(row, 5) is not None else None
-
+                this_dict = {}
+                this_dict['Age Group'] = self.groupsTable.item(row, 4).checkState() == Qt.Checked if self.groupsTable.item(row, 4) is not None else None
+                this_dict['Mount ID'] = self.groupsTable.item(row, 5).text() if self.groupsTable.item(row, 5) is not None else None
+                groups_to_export[grpName] = this_dict
+            
         groupCounter = 5
         rowNo = 5
+        ageGroupCounter = 5
 
         for g in groups_to_export.keys():
             print(f'Exporting group: {g}')
             group = data.selectionGroup(g)
             datapoint_name = group.name
             dps_ws.cell(groupCounter, 1, value=datapoint_name)
+
             if group.type == data.Sample:
                 dps_ws.cell(groupCounter, 2, value=group.name)
             elif group.type == data.ReferenceMaterial:
@@ -440,7 +446,18 @@ class SettingsWidget(QWidget):
             # Note the typo in 'Associated Litterature' which is in the template. When this gets changed, we'll need to update this line
             dps_ws.cell(groupCounter, self.dps_col_indices['Associated litterature'], value = self.litLineEdit.text)
             dps_ws.cell(groupCounter, self.dps_col_indices['Funding'], value = self.fundingLineEdit.text)
-            dps_ws.cell(groupCounter, self.dps_col_indices['Mount ID'], value = groups_to_export[g])
+            grp_dict = groups_to_export[g]
+            
+            dps_ws.cell(groupCounter, self.dps_col_indices['Mount ID'], value = grp_dict['Mount ID'])
+            # If we're treating this group as an age group, add to the UPbAgeGroup sheet
+            if grp_dict['Age Group']:
+                agegrp_ws.cell(ageGroupCounter, 1, value=datapoint_name)
+                agegrp_ws.cell(ageGroupCounter, 3, value=group.name)
+                agegrp_ws.cell(ageGroupCounter, 5, value=len(group.selections()))
+                # TODO: Add group age data here, depending on calculations to come...
+
+                ageGroupCounter += 1
+
 
             # Now export U-Pb data
             if rowNo == 5:
