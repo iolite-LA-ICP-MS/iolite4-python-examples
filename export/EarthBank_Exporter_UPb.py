@@ -10,6 +10,10 @@ import os
 import subprocess
 from shutil import copy2
 from pprint import pprint
+import numpy as np
+
+# We'll use the weighted mean helper function from iolite_helpers for calculations.
+from iolite_helpers import weightedMean
 
 from openpyxl import load_workbook
 
@@ -28,8 +32,8 @@ UI_FILE_PATH = '/Users/bence/iolite4-python-examples/export/EarthBank_Exporter_U
 '''
 Variables for your lab.
 '''
-USERS = ['Alan Grieg', 'Ashlea Wainwright', 'Bence Paul', 'Brandon Mahan', 'Janet Hergt', 'Jon Woodhead', 'Roland Maas']
-LAB = 'Isotope Geochemistry,  The University of Melbourne'
+USERS = ['Bence Paul', 'Alan Grieg', 'Ashlea Wainwright', 'Brandon Mahan', 'Janet Hergt', 'Jon Woodhead', 'Roland Maas']
+LAB = 'Melbourne Isotope Analytics,  The University of Melbourne'
 
 LASER_WAVELENGTHS = ['193 nm', '213 nm', '266 nm']
 LASER_PULSE_WIDTHS = ['< 5 ns', '5-10 ns', '> 10 ns']
@@ -96,6 +100,8 @@ class SettingsWidget(QWidget):
         self.carrierGasFlowRateSpinBox = ui.findChild(QDoubleSpinBox, 'carrierGasFlowRateDoubleSpinBox')
         self.mixingDeviceComboBox = ui.findChild(QComboBox, 'mixingDeviceComboBox')
 
+        self.addResultButton = ui.findChild(QToolButton, 'addResultButton')
+
         # Get the valid options from the template file
         template_wb = load_workbook(TEMPLATE_PATH)
         lookup_tables_ws = template_wb['Lookup Tables']
@@ -119,6 +125,51 @@ class SettingsWidget(QWidget):
 
         if 'Mineral Type' not in lookup_values:
             raise RuntimeError('Could not find "Mineral Type" in the template file. Please check that the template file is correct.')
+
+
+        # Also get all the column indices for the relevant sheets in the template file
+        try:
+            dps_ws = template_wb['UPb Datapoints']
+            upb_ws = template_wb['UPbSpotData']
+            icpms_ws = template_wb['ICPMS']
+        except KeyError:
+            print('Could not find expected sheet in template file')
+            return
+
+        # Get the column indices for the various data points in the template file
+        self.dps_col_indices = {}
+        for col in dps_ws.iter_cols(min_row=3, max_row=3):
+            header = col[0].value
+            if header:
+                self.dps_col_indices[header] = col[0].column
+
+        # Sanity check to make sure that we actually found some column indices
+        if not self.dps_col_indices:
+            raise RuntimeError('Could not find any column indices in the "UPb Datapoints" sheet of the template file.')
+
+        # Repeat for UPbSpotData sheet
+        self.upb_col_indices = {}
+        for col in upb_ws.iter_cols(min_row=4, max_row=4):
+            header = str(col[0].value)
+            if header:
+                # Skip the uncertainty, type and method columns
+                if "uncertainty" in header.lower() or "type" in header.lower() or "method" in header.lower():
+                    continue
+
+                self.upb_col_indices[header] = col[0].column
+
+        if not self.upb_col_indices:
+            raise RuntimeError('Could not find any column indices in the "UPbSpotData" sheet of the template file.')
+
+        # Repeat for ICP-MS sheet
+        self.icpms_col_indices = {}
+        for col in icpms_ws.iter_cols(min_row=4, max_row=4):
+            header = col[0].value
+            if header:
+                self.icpms_col_indices[header] = col[0].column
+
+        if not self.icpms_col_indices:
+            raise RuntimeError('Could not find any column indices in the "ICPMS" sheet of the template file.')
 
         # Fill mineral type combo box
         self.mineralTypeComboBox = ui.findChild(QComboBox, 'mineralComboBox')
@@ -148,26 +199,27 @@ class SettingsWidget(QWidget):
 
         '''
         Get primary RMs (calibrants) as these should not be included in exported results.
+        TODO: Implement getting primary RM from current DRS settings NOTE: This could be 
+        as simple as adding a property to the intermediate and output channels from the DRS.
         '''
-        calibrants = []
+        primaryRM = ''
 
-        for ch in data.timeSeriesList(data.Input):
-            extStd = ch.property('External standard')
+        for ch in data.timeSeriesList(data.Intermediate):
+            extStd = ch.property('Primary RM')
             if extStd is not None:
-                calibrants.append(extStd)
+                primaryRM = extStd
 
         # Set up the groups table
-        self.groupsTable.setColumnCount(3)
-        self.groupsTable.setHorizontalHeaderLabels(['Group Name', 'Type', 'Selection Count'])
+        self.groupsTable.setColumnCount(6)
+        self.groupsTable.setHorizontalHeaderLabels(['Group Name', 'Type', 'Selection Count', 'Weighted Mean age', 'Treat as Age Group?', 'Mount ID'])
         self.groupsTable.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.groupsTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.groupsTable.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.groupsTable.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
         def createGroupTableEntry(group, type):
             row = self.groupsTable.rowCount
             self.groupsTable.insertRow(row)
 
             groupNameItem = QTableWidgetItem(group.name)
-            if group.name in calibrants:
+            if group.name is primaryRM:
                 groupNameItem.setCheckState(Qt.Unchecked)
             else:
                 groupNameItem.setCheckState(Qt.Checked)
@@ -178,7 +230,43 @@ class SettingsWidget(QWidget):
 
             selCountItem = QTableWidgetItem(str(group.count))
             selCountItem.setTextAlignment(Qt.AlignHCenter)
+            selCountItem.setFlags(selCountItem.flags() & ~Qt.ItemIsEditable)
             self.groupsTable.setItem(row, 2, selCountItem)
+
+            # Get 206/238 ages and uncertainties for this group:
+            age206_238_ch = data.timeSeries('Final Pb206/U238 age')
+            results = [data.result(sel, age206_238_ch) for sel in group.selections()]
+            ages = np.array([result.value() for result in results])
+            uncertainties = np.array([result.propagatedUncertainty() for result in results])
+
+            mean_results = weightedMean(ages, uncertainties)
+            grp_w_mean, grp_w_unc = mean_results['internal']
+
+            # Add the mean and uncertainty to the table, but trim the numbers to a reasonable number of decimal places
+            # using significant figures of the uncertainty
+            # Determine the number of decimal places based on the uncertainty
+            if grp_w_unc > 0:
+                decimals = -int(np.floor(np.log10(grp_w_unc)))
+            else:
+                decimals = 2
+            grp_w_mean = round(grp_w_mean, decimals)
+            grp_w_unc = round(grp_w_unc, decimals)
+
+            groupMeanItem = QTableWidgetItem(f'{grp_w_mean} ± {grp_w_unc}')
+            groupMeanItem.setTextAlignment(Qt.AlignHCenter)
+            groupMeanItem.setFlags(groupMeanItem.flags() & ~Qt.ItemIsEditable)
+            self.groupsTable.setItem(row, 3, groupMeanItem)
+
+            treatAsAgeGroupItem = QTableWidgetItem()
+            treatAsAgeGroupItem.setFlags(treatAsAgeGroupItem.flags() | Qt.ItemIsUserCheckable)
+            treatAsAgeGroupItem.setCheckState(Qt.Unchecked)
+            self.groupsTable.setItem(row, 4, treatAsAgeGroupItem)
+
+            mount_ID_item = QTableWidgetItem()
+            mount_ID_item.setText(f'Mount ID {row + 1}')
+            mount_ID_item.setTextAlignment(Qt.AlignHCenter)
+            mount_ID_item.setFlags(mount_ID_item.flags() | Qt.ItemIsEditable)
+            self.groupsTable.setItem(row, 5, mount_ID_item)
 
 
         for group in data.selectionGroupList(data.ReferenceMaterial):
@@ -187,13 +275,24 @@ class SettingsWidget(QWidget):
         for group in data.selectionGroupList(data.Sample):
             createGroupTableEntry(group, 'Sample')
 
+        # All this just to properly size the columns based on their content and header text
+        self.groupsTable.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.groupsTable.resizeColumnsToContents()
+        header_font_metrics = self.groupsTable.horizontalHeader().fontMetrics()
+        for column in range(self.groupsTable.columnCount):
+            header_text = self.groupsTable.horizontalHeaderItem(column).text()
+            header_width = header_font_metrics.horizontalAdvance(header_text) + 30
+            header_width = max(header_width, self.groupsTable.horizontalHeader().sectionSizeHint(column))
+            self.groupsTable.setColumnWidth(column, max(self.groupsTable.columnWidth(column), header_width))
+
         # Set up the ratios table
         self.ratiosTable.setColumnCount(2)
         self.ratiosTable.setHorizontalHeaderLabels(['Result', 'Channel'])
         self.ratiosTable.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.ratiosTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.ratiosTable.verticalHeader().hide() 
-        # self.ratiosTable.setEditTriggers(QTableWidget.NoEditTriggers)
+
+        self.addResultButton.clicked.connect(self.addResultRow)
 
         U_Pb_field_defaults = {
             'U concentration (µg.g-1)': 'Approx_U_PPM',
@@ -267,6 +366,28 @@ class SettingsWidget(QWidget):
         else:
             self.continueButton.setText("Continue")
 
+    def addResultRow(self):
+        row_count = self.ratiosTable.rowCount
+        self.ratiosTable.insertRow(row_count)
+        # Add a combobox in the first column to select the type of ratio
+        ratio_combo = QComboBox()
+        # Set the items to the dict keys of upb_col_indices
+        upb_keys = [key for key in self.upb_col_indices.keys()]
+        ratio_combo.addItems(upb_keys)
+        ratio_combo.setCurrentIndex(27)
+        self.ratiosTable.setCellWidget(row_count, 0, ratio_combo)
+
+        # Create a combobox with all channels available in it
+        channel_combo = QComboBox()
+        channel_combo.addItem('None')
+        channel_combo.addItems(data.timeSeriesNames())
+        channel_combo.setCurrentIndex(0)
+        self.ratiosTable.setCellWidget(row_count, 1, channel_combo)
+
+        # Move the focus to the newly added row
+        self.ratiosTable.scrollToItem(self.ratiosTable.item(row_count, 0))
+        self.ratiosTable.setCurrentCell(row_count, 0)
+
 
     def exportData(self):
         print('Exporting data...')
@@ -286,35 +407,9 @@ class SettingsWidget(QWidget):
             return
 
         wb = load_workbook(fp)
-
-        try:
-            dps_ws = wb['UPb Datapoints']
-            upb_ws = wb['UPbSpotData']
-            icpms_ws = wb['ICPMS']
-        except KeyError:
-            print('Could not find expected sheet in template file')
-            return
-
-        # Get the column indices for the various data points in the template file
-        dps_col_indices = {}
-        for col in dps_ws.iter_cols(min_row=3, max_row=3):
-            header = col[0].value
-            if header:
-                dps_col_indices[header] = col[0].column
-
-        # Repeat for UPbSpotData sheet
-        upb_col_indices = {}
-        for col in upb_ws.iter_cols(min_row=4, max_row=4):
-            header = col[0].value
-            if header:
-                upb_col_indices[header] = col[0].column
-
-        # Repeat for ICP-MS sheet
-        icpms_col_indices = {}
-        for col in icpms_ws.iter_cols(min_row=4, max_row=4):
-            header = col[0].value
-            if header:
-                icpms_col_indices[header] = col[0].column
+        dps_ws = wb['UPb Datapoints']
+        upb_ws = wb['UPbSpotData']
+        icpms_ws = wb['ICPMS']
 
         # Get list of groups to export and their type
         groups_to_export = []
@@ -336,14 +431,14 @@ class SettingsWidget(QWidget):
                 dps_ws.cell(groupCounter, 3, value=group.name)
             
             # Export metadata to the template file
-            dps_ws.cell(groupCounter, dps_col_indices['U-Pb Analytical Technique'], value = self.techniqueComboBox.currentText)
+            dps_ws.cell(groupCounter, self.dps_col_indices['U-Pb Analytical Technique'], value = self.techniqueComboBox.currentText)
             dps_ws.cell(groupCounter, 6, value = data.sessionFilePath())
-            dps_ws.cell(groupCounter, dps_col_indices['Analyst'], value = self.userComboBox.currentText)
-            dps_ws.cell(groupCounter, dps_col_indices['Laboratory'], value = self.labLineEdit.text)
-            dps_ws.cell(groupCounter, dps_col_indices['Mineral Type'], value = self.mineralTypeComboBox.currentText)
+            dps_ws.cell(groupCounter, self.dps_col_indices['Analyst'], value = self.userComboBox.currentText)
+            dps_ws.cell(groupCounter, self.dps_col_indices['Laboratory'], value = self.labLineEdit.text)
+            dps_ws.cell(groupCounter, self.dps_col_indices['Mineral Type'], value = self.mineralTypeComboBox.currentText)
             # Note the typo in 'Associated Litterature' which is in the template. When this gets changed, we'll need to update this line
-            dps_ws.cell(groupCounter, dps_col_indices['Associated litterature'], value = self.litLineEdit.text)
-            dps_ws.cell(groupCounter, dps_col_indices['Funding'], value = self.fundingLineEdit.text)
+            dps_ws.cell(groupCounter, self.dps_col_indices['Associated litterature'], value = self.litLineEdit.text)
+            dps_ws.cell(groupCounter, self.dps_col_indices['Funding'], value = self.fundingLineEdit.text)
 
             # Now export U-Pb data
             if rowNo == 5:
@@ -355,6 +450,10 @@ class SettingsWidget(QWidget):
             spot_widths = set()
             
             for sel in group.selections():
+                # Exclude component selections (linked selections will be exported, but components will not)
+                if sel.hasLinks():
+                    continue
+
                 upb_ws.cell(row=rowNo, column=1, value=datapoint_name)
                 upb_ws.cell(row=rowNo, column=3, value=sel.name)
                 upb_ws.cell(row=rowNo, column=4, value=sel.startTime.toString('yyyy-MM-dd HH:mm:ss'))
@@ -368,27 +467,35 @@ class SettingsWidget(QWidget):
                     field_name = self.ratiosTable.item(row, 0).text() if self.ratiosTable.item(row, 0) is not None else None
                     ch_name = self.ratiosTable.cellWidget(row, 1).currentText if self.ratiosTable.cellWidget(row, 1) is not None else None
 
-                    if field_name is None or ch_name is None or ch_name == 'None':
-                        #print(f'Missing field name or channel name at row {row}: field_name={field_name}, ch_name={ch_name}')
+                    # The field_name might be None if the user has added a field, so check for that here:
+                    if field_name is None:
+                        field_name = self.ratiosTable.cellWidget(row, 0).currentText if self.ratiosTable.cellWidget(row, 0) is not None else None
+
+                    if field_name not in self.upb_col_indices:
+                        print(f'Field name {field_name} at row {row} is not in the UPb column indices')
+                        continue
+
+                    # The user may have chosen "None" as the channel name, which just means they don't want to export this value
+                    if ch_name is None or ch_name.lower() == 'none':
                         continue
 
                     result = data.result(sel, data.timeSeries(ch_name)).value()
                     uncert = data.result(sel, data.timeSeries(ch_name)).propagatedUncertainty()
 
-                    upb_ws.cell(row=rowNo, column=upb_col_indices[field_name], value=result)
+                    upb_ws.cell(row=rowNo, column=self.upb_col_indices[field_name], value=result)
                     if isinstance(uncert, float) and (uncert != uncert):  # Check for NaN
                         pass
                         #print(f'No propagated uncertainty for field {field_name} at row {row}')
                     else:
-                        upb_ws.cell(row=rowNo, column=upb_col_indices[field_name] + 1, value=uncert)
+                        upb_ws.cell(row=rowNo, column=self.upb_col_indices[field_name] + 1, value=uncert)
 
                 rowNo += 1
 
             # If any of the rep rate, spot height, or spot width have a single unique value, export them to the ICP-MS sheet
             if len(rep_rates) == 1 or len(spot_heights) == 1 or len(spot_widths) == 1:
-                icpms_ws.cell(row=groupCounter, column=icpms_col_indices['datapointName'], value=datapoint_name)
+                icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['datapointName'], value=datapoint_name)
             if len(rep_rates) == 1:
-                icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_laserRepetitionRate'], value=rep_rates.pop())
+                icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_laserRepetitionRate'], value=rep_rates.pop())
             else:
                 print(f'Not exporting rep rates for group {group.name} because there are multiple rep rates reported: {rep_rates}')
             if len(spot_heights) == 1 and len(spot_widths) == 1:
@@ -398,20 +505,20 @@ class SettingsWidget(QWidget):
                 if spot_height == spot_width:
                     icpms_ws.cell(
                         row=groupCounter,
-                        column=icpms_col_indices['laserMetadata_laserSpotSize'],
+                        column=self.icpms_col_indices['laserMetadata_laserSpotSize'],
                         value=spot_height
                     )
             else:
                 print(f'Not exporting spot size for group {group.name} because there are multiple spot heights reported: {spot_heights} or multiple spot widths reported: {spot_widths}')
 
             # Export other laser metadata
-            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_laserFluence'], value=self.laserFluenceDoubleSpinBox.value)
-            # icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_laserWavelength'], value=self.laserWavelengthComboBox.currentText())
-            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_pulseWidthValue'], value=self.laserPulseWidthComboBox.currentText)
-            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_cellModel'], value=self.cellModelComboBox.currentText)
-            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_carrierGas'], value=self.carrierGasComboBox.currentText)
-            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_mixingDevice'], value=self.mixingDeviceComboBox.currentText)
-            icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_carrierGasFlow'], value=self.carrierGasFlowRateSpinBox.value)
+            icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_laserFluence'], value=self.laserFluenceDoubleSpinBox.value)
+            # icpms_ws.cell(row=groupCounter, column=icpms_col_indices['laserMetadata_laserWavelength'], value=self.laserWavelengthComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_pulseWidthValue'], value=self.laserPulseWidthComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_cellModel'], value=self.cellModelComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_carrierGas'], value=self.carrierGasComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_mixingDevice'], value=self.mixingDeviceComboBox.currentText)
+            icpms_ws.cell(row=groupCounter, column=self.icpms_col_indices['laserMetadata_carrierGasFlow'], value=self.carrierGasFlowRateSpinBox.value)
 
             groupCounter += 1
 
