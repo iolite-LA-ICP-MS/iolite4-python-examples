@@ -182,7 +182,6 @@ class SettingsWidget(QWidget):
         self.userComboBox.addItems(USERS)
         self.labLineEdit.setText(LAB)
         self.uncertTypeComboBox.addItems(['2 standard error', '1σ', '2σ', '95%'])
-        self.sessionIDComboBox.addItems([data.sessionUUID(), 'File Path'])
 
         self.laserFluenceDoubleSpinBox.setValue(1.0)
         self.laserWavelengthComboBox.addItems(LASER_WAVELENGTHS)
@@ -411,16 +410,17 @@ class SettingsWidget(QWidget):
         upb_ws = wb['UPbSpotData']
         icpms_ws = wb['ICPMS']
 
-        # Get list of groups to export and their type
-        groups_to_export = []
+        # Get dict of groups to export, with their mount IDs
+        groups_to_export = {}
         for row in range(self.groupsTable.rowCount):
             grpName = self.groupsTable.item(row, 0).text()
             if self.groupsTable.item(row, 0).checkState() == Qt.Checked:
-                groups_to_export.append(grpName)
+                groups_to_export[grpName] = self.groupsTable.item(row, 5).text() if self.groupsTable.item(row, 5) is not None else None
 
         groupCounter = 5
         rowNo = 5
-        for g in groups_to_export:
+
+        for g in groups_to_export.keys():
             print(f'Exporting group: {g}')
             group = data.selectionGroup(g)
             datapoint_name = group.name
@@ -432,6 +432,7 @@ class SettingsWidget(QWidget):
             
             # Export metadata to the template file
             dps_ws.cell(groupCounter, self.dps_col_indices['U-Pb Analytical Technique'], value = self.techniqueComboBox.currentText)
+            dps_ws.cell(groupCounter, 5, value = data.sessionUUID())
             dps_ws.cell(groupCounter, 6, value = data.sessionFilePath())
             dps_ws.cell(groupCounter, self.dps_col_indices['Analyst'], value = self.userComboBox.currentText)
             dps_ws.cell(groupCounter, self.dps_col_indices['Laboratory'], value = self.labLineEdit.text)
@@ -439,6 +440,7 @@ class SettingsWidget(QWidget):
             # Note the typo in 'Associated Litterature' which is in the template. When this gets changed, we'll need to update this line
             dps_ws.cell(groupCounter, self.dps_col_indices['Associated litterature'], value = self.litLineEdit.text)
             dps_ws.cell(groupCounter, self.dps_col_indices['Funding'], value = self.fundingLineEdit.text)
+            dps_ws.cell(groupCounter, self.dps_col_indices['Mount ID'], value = groups_to_export[g])
 
             # Now export U-Pb data
             if rowNo == 5:
