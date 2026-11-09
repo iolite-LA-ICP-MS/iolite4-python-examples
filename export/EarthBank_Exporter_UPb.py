@@ -8,6 +8,7 @@
 
 import os
 import subprocess
+import sys
 from shutil import copy2
 from pprint import pprint
 import numpy as np
@@ -15,22 +16,67 @@ import numpy as np
 # We'll use the weighted mean helper function from iolite_helpers for calculations.
 from iolite_helpers import weightedMean
 
+from iolite.ui import CommonUIPyInterface as CUI
+
+# iolite may execute scripts with an unreliable __file__. The code object's
+# filename is also used by tracebacks and normally contains the script path.
+SCRIPT_PATH = next(
+    (path for path in (sys._getframe().f_code.co_filename,
+                      globals().get('__file__'))
+     if path and os.path.isfile(path)),
+    None,
+)
+if SCRIPT_PATH is None:
+    raise RuntimeError(
+        'Could not determine the exporter script location from iolite. '
+        'Run the exporter using its saved Python file.'
+    )
+EXPORTER_DIR = os.path.dirname(os.path.abspath(SCRIPT_PATH))
+
+if EXPORTER_DIR not in sys.path:
+    sys.path.insert(0, EXPORTER_DIR)
+
+try:
+    from exporter_config import ConfigField, ExporterConfig
+except ModuleNotFoundError as exc:
+    if exc.name != 'exporter_config':
+        raise
+    raise ModuleNotFoundError(
+        f'Could not find exporter_config.py in {EXPORTER_DIR}. '
+        'Copy exporter_config.py from the iolite4-python-examples export '
+        'directory into this folder, then rerun the exporter.'
+    ) from exc
+
+# UI file should be in the same directory as the exporter script.
+UI_FILE_PATH = os.path.join(EXPORTER_DIR, 'EarthBank_Exporter_UPb.ui')
+# Check if the UI file exists.
+if not os.path.isfile(UI_FILE_PATH):
+    raise FileNotFoundError(
+        f'Could not find the UI file at {UI_FILE_PATH}. '
+        'Ensure that EarthBank_Exporter_UPb.ui is in the same directory as the exporter script.'
+    )
+
+# Template file should be in the same directory as the exporter script.
+TEMPLATE_PATH = os.path.join(EXPORTER_DIR, 'UPbDatapoint_LAICPMS.template.v2026-06-22.xlsx')
+# Check if the template file exists.
+if not os.path.isfile(TEMPLATE_PATH):
+    raise FileNotFoundError(
+        f'Could not find the template file at {TEMPLATE_PATH}. '
+        'Ensure that UPbDatapoint_LAICPMS.template.v2026-06-22.xlsx is in the same directory as the exporter script.'
+    )
+
 from openpyxl import load_workbook
 
 from iolite.Qt import Qt
-from iolite.QtCore import QFile, QIODevice, QEventLoop
-from iolite.QtGui import QComboBox, QHeaderView, QLabel, QLineEdit, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget, QDoubleSpinBox
+from iolite.QtCore import QFile, QIODevice, QEventLoop, QUrl
+from iolite.QtGui import QComboBox, QHeaderView, QLabel, QLineEdit, QMessageBox, \
+    QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget, \
+    QDoubleSpinBox, QMenu, QDesktopServices
 from iolite.QtGui import QCheckBox
 from iolite.QtUiTools import QUiLoader
 
 '''
-Paths: tell the script where to find the template file and the UI file. These are hardcoded for now, but could be made more flexible in the future.
-'''
-TEMPLATE_PATH = '/Users/bence/Dropbox/testing/AGN/UPb_Template/UPbDatapoint_LAICPMS.template.v2026-06-22.xlsx'
-UI_FILE_PATH = '/Users/bence/iolite4-python-examples/export/EarthBank_Exporter_UPb.ui'
-
-'''
-Variables for your lab.
+Default configuration for the EarthBank U-Pb exporter.
 '''
 USERS = ['Bence Paul', 'Alan Grieg', 'Ashlea Wainwright', 'Brandon Mahan', 'Janet Hergt', 'Jon Woodhead', 'Roland Maas']
 LAB = 'Melbourne Isotope Analytics,  The University of Melbourne'
@@ -39,16 +85,64 @@ LASER_WAVELENGTHS = ['193 nm', '213 nm', '266 nm']
 LASER_PULSE_WIDTHS = ['< 5 ns', '5-10 ns', '> 10 ns']
 CELL_MODEL = ['TV2', 'TV3', 'Helex']
 CARRIER_GAS = ['He', 'Ar', 'N2']
-MIXING_DEVICES = ['Squid', 'ESL Mixing bulb', 'Other']
+MIXING_DEVICES = ['Squid', 'ESL Mixing bulb', 'None', 'Other']
+BATCH_ID_OPTIONS = ['Session UUID', 'Session file path']
 
-MULTICOLLECTOR_MACHINE_NAMES = ['Thermo Nepture', 'Neoma', 'Nu Plasma II/III']
-TOF_MACHINE_NAMES = ['Vitesse Text', 'icpTOF']
+# This is the key used to store the config file's path in the QSettings.
+# Only the path to the config file is stored, not the contents.
+CONFIG_PATH_KEY = 'EarthBank_Exporter_UPb/config_path'
+
+DEFAULT_CONFIG = {
+    'users': USERS,
+    'lab': LAB,
+    'batch_id': BATCH_ID_OPTIONS,
+    'default_batch_id': 'Session UUID',
+    'laser_wavelengths': LASER_WAVELENGTHS,
+    'laser_pulse_widths': LASER_PULSE_WIDTHS,
+    'cell_models': CELL_MODEL,
+    'carrier_gases': CARRIER_GAS,
+    'mixing_devices': MIXING_DEVICES,
+    'default_user': USERS[0],
+    'default_laser_wavelength': '193 nm',
+    'default_laser_pulse_width': '< 5 ns',
+    'default_cell_model': 'TV2',
+    'default_carrier_gas': 'He',
+    'default_mixing_device': 'Squid',
+    'laser_fluence': 3.0,
+    'carrier_gas_flow_rate': 1.0,
+}
+
+CONFIG_CHOICES = (
+    ('users', 'default_user', 'userComboBox'),
+    ('batch_id', 'default_batch_id', 'batchIDComboBox'),
+    ('laser_wavelengths', 'default_laser_wavelength', 'laserWavelengthComboBox'),
+    ('laser_pulse_widths', 'default_laser_pulse_width', 'laserPulseWidthComboBox'),
+    ('cell_models', 'default_cell_model', 'cellModelComboBox'),
+    ('carrier_gases', 'default_carrier_gas', 'carrierGasComboBox'),
+    ('mixing_devices', 'default_mixing_device', 'mixingDeviceComboBox'),
+)
+
+
+CONFIG_FIELDS = {
+    **{key: ConfigField(type(value)) for key, value in DEFAULT_CONFIG.items()},
+}
+
+CONFIG_MANAGER = ExporterConfig(
+    defaults=DEFAULT_CONFIG,
+    fields=CONFIG_FIELDS,
+    settings_key=CONFIG_PATH_KEY,
+    title='EarthBank U-Pb Exporter',
+    choices={selected: options for options, selected, _ in CONFIG_CHOICES},
+)
+
 
 class SettingsWidget(QWidget):
 
-    def __init__(self, parent=None):
+    def __init__(self, config_path, config, parent=None):
         super().__init__(parent)
 
+        self.config_path = config_path
+        self.config = config
         self.setAttribute(Qt.WA_DeleteOnClose, True)
 
         self.setLayout(QVBoxLayout())
@@ -79,13 +173,14 @@ class SettingsWidget(QWidget):
         self.continueButton = ui.findChild(QToolButton, 'continueButton')
         self.backButton = ui.findChild(QToolButton, 'backButton')
         self.stepLabel = ui.findChild(QLabel, 'stepLabel')
+        self.configsButton = ui.findChild(QToolButton, 'configsButton')
 
         self.userComboBox = ui.findChild(QComboBox, 'userComboBox')
         self.labLineEdit = ui.findChild(QLineEdit, 'labLineEdit')
         self.litLineEdit = ui.findChild(QLineEdit, 'litLineEdit')
         self.fundingLineEdit = ui.findChild(QLineEdit, 'fundingLineEdit')
-        self.scaleComboBox = ui.findChild(QComboBox, 'scaleComboBox')
         self.techniqueComboBox = ui.findChild(QComboBox, 'techniqueComboBox')
+        self.batchIDComboBox = ui.findChild(QComboBox, 'batchIDComboBox')
         self.uncertTypeComboBox = ui.findChild(QComboBox, 'uncertaintyTypeComboBox')
         self.trimSigFigsCheckBox = ui.findChild(QCheckBox, 'trimSigFigsCheckBox')
         self.sessionIDComboBox = ui.findChild(QComboBox, 'sessionIDComboBox')
@@ -100,7 +195,19 @@ class SettingsWidget(QWidget):
         self.carrierGasFlowRateSpinBox = ui.findChild(QDoubleSpinBox, 'carrierGasFlowRateDoubleSpinBox')
         self.mixingDeviceComboBox = ui.findChild(QComboBox, 'mixingDeviceComboBox')
 
+        # ConfigsButton menu setup
+        self.configsMenu = QMenu(self.configsButton)
+        self.configsMenu.addAction('Reveal Config File', self.revealConfigFile)
+        # Add option to save current configuration
+        self.configsMenu.addAction('Save Config File', self.saveDefaults)
+        self.configsMenu.addAction('Select Config File', self.changeConfig)
+        self.configsButton.setMenu(self.configsMenu)
+        self.configsButton.setIcon(CUI().icon('book'))
+        self.configsButton.setToolTip('Configuration Options')
+        self.configsButton.setPopupMode(QToolButton.InstantPopup)
+
         self.addResultButton = ui.findChild(QToolButton, 'addResultButton')
+        self.removeResultButton = ui.findChild(QToolButton, 'removeResultButton')
 
         # Get the valid options from the template file
         template_wb = load_workbook(TEMPLATE_PATH)
@@ -126,6 +233,7 @@ class SettingsWidget(QWidget):
         if 'Mineral Type' not in lookup_values:
             raise RuntimeError('Could not find "Mineral Type" in the template file. Please check that the template file is correct.')
 
+        self.batchIDComboBox.addItems(['Session UUID', 'Session file path'])
 
         # Also get all the column indices for the relevant sheets in the template file
         try:
@@ -179,22 +287,9 @@ class SettingsWidget(QWidget):
         self.techniqueComboBox.addItems(lookup_values['U-Pb Analytical Technique'])
         self.techniqueComboBox.setCurrentText('LA-ICP-MS')
         
-        self.userComboBox.addItems(USERS)
-        self.labLineEdit.setText(LAB)
         self.uncertTypeComboBox.addItems(['2 standard error', '1σ', '2σ', '95%'])
 
-        self.laserFluenceDoubleSpinBox.setValue(1.0)
-        self.laserWavelengthComboBox.addItems(LASER_WAVELENGTHS)
-        self.laserWavelengthComboBox.setCurrentText('193 nm')
-        self.laserPulseWidthComboBox.addItems(LASER_PULSE_WIDTHS)
-        self.laserPulseWidthComboBox.setCurrentText('< 5 ns')
-        self.cellModelComboBox.addItems(CELL_MODEL)
-        self.cellModelComboBox.setCurrentText('TV2')
-        self.carrierGasComboBox.addItems(CARRIER_GAS)
-        self.carrierGasComboBox.setCurrentText('He')
-        self.mixingDeviceComboBox.addItems(MIXING_DEVICES)
-        self.mixingDeviceComboBox.setCurrentText('Squid')
-        self.carrierGasFlowRateSpinBox.setValue(1.0)
+        self.applyConfig()
 
         '''
         Get primary RMs (calibrants) as these should not be included in exported results.
@@ -213,6 +308,7 @@ class SettingsWidget(QWidget):
         self.groupsTable.setHorizontalHeaderLabels(['Group Name', 'Type', 'Selection Count', 'Weighted Mean age', 'Treat as Age Group?', 'Mount ID'])
         self.groupsTable.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.groupsTable.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
+
         def createGroupTableEntry(group, type):
             row = self.groupsTable.rowCount
             self.groupsTable.insertRow(row)
@@ -232,24 +328,8 @@ class SettingsWidget(QWidget):
             selCountItem.setFlags(selCountItem.flags() & ~Qt.ItemIsEditable)
             self.groupsTable.setItem(row, 2, selCountItem)
 
-            # Get 206/238 ages and uncertainties for this group:
-            age206_238_ch = data.timeSeries('Final Pb206/U238 age')
-            results = [data.result(sel, age206_238_ch) for sel in group.selections()]
-            ages = np.array([result.value() for result in results])
-            uncertainties = np.array([result.propagatedUncertainty() for result in results])
-
-            mean_results = weightedMean(ages, uncertainties)
-            grp_w_mean, grp_w_unc = mean_results['internal']
-
-            # Add the mean and uncertainty to the table, but trim the numbers to a reasonable number of decimal places
-            # using significant figures of the uncertainty
-            # Determine the number of decimal places based on the uncertainty
-            if grp_w_unc > 0:
-                decimals = -int(np.floor(np.log10(grp_w_unc)))
-            else:
-                decimals = 2
-            grp_w_mean = round(grp_w_mean, decimals)
-            grp_w_unc = round(grp_w_unc, decimals)
+            # Get group 6/38 age and uncertainty
+            grp_w_mean, grp_w_unc = self.calc_group_6_38_age(group)
 
             groupMeanItem = QTableWidgetItem(f'{grp_w_mean} ± {grp_w_unc}')
             groupMeanItem.setTextAlignment(Qt.AlignHCenter)
@@ -292,6 +372,7 @@ class SettingsWidget(QWidget):
         self.ratiosTable.verticalHeader().hide() 
 
         self.addResultButton.clicked.connect(self.addResultRow)
+        self.removeResultButton.clicked.connect(self.removeResultRow)
 
         U_Pb_field_defaults = {
             'U concentration (µg.g-1)': 'Approx_U_PPM',
@@ -329,6 +410,39 @@ class SettingsWidget(QWidget):
         self.stackedWidget.setCurrentIndex(0)
         self.stepLabel.setText(f'Step {self.stackedWidget.currentIndex+1} of 4')
 
+    def applyConfig(self):
+        for options_key, selected_key, widget_name in CONFIG_CHOICES:
+            combo = getattr(self, widget_name)
+            combo.clear()
+            combo.addItems(self.config[options_key])
+            combo.setCurrentText(self.config[selected_key])
+        self.labLineEdit.setText(self.config['lab'])
+        self.laserFluenceDoubleSpinBox.setValue(self.config['laser_fluence'])
+        self.carrierGasFlowRateSpinBox.setValue(self.config['carrier_gas_flow_rate'])
+
+    def changeConfig(self):
+        result = CONFIG_MANAGER.choose(self, use_remembered=False)
+        if result is not None:
+            self.config_path, self.config = result
+            self.applyConfig()
+
+    def saveDefaults(self):
+        updates = {'lab': self.labLineEdit.text}
+        for options_key, selected_key, widget_name in CONFIG_CHOICES:
+            updates[options_key] = self.config[options_key]
+            updates[selected_key] = getattr(self, widget_name).currentText
+        updates['laser_fluence'] = self.laserFluenceDoubleSpinBox.value
+        updates['carrier_gas_flow_rate'] = self.carrierGasFlowRateSpinBox.value
+        config = CONFIG_MANAGER.save_updates(self.config_path, updates, self)
+        if config is not None:
+            self.config = config
+
+    def revealConfigFile(self):
+        if self.config_path and os.path.exists(self.config_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.config_path))
+        else:
+            QMessageBox.warning(self, 'Config file not found', 'The configuration file could not be found.')
+
     def previousTab(self):
         current_index = self.stackedWidget.currentIndex
         self.stackedWidget.setCurrentIndex(current_index-1)
@@ -365,6 +479,31 @@ class SettingsWidget(QWidget):
         else:
             self.continueButton.setText("Continue")
 
+
+    def calc_group_6_38_age(self, group):
+        # Make sure to pass the group OBJECT not name string
+
+        # Get 206/238 ages and uncertainties for this group:
+        age206_238_ch = data.timeSeries('Final Pb206/U238 age')
+        results = [data.result(sel, age206_238_ch) for sel in group.selections()]
+        ages = np.array([result.value() for result in results])
+        uncertainties = np.array([result.propagatedUncertainty() for result in results])
+
+        mean_results = weightedMean(ages, uncertainties)
+        grp_w_mean, grp_w_unc = mean_results['internal']
+
+        # Add the mean and uncertainty to the table, but trim the numbers to a reasonable number of decimal places
+        # using significant figures of the uncertainty
+        # Determine the number of decimal places based on the uncertainty
+        if grp_w_unc > 0:
+            decimals = -int(np.floor(np.log10(grp_w_unc)))
+        else:
+            decimals = 2
+        grp_w_mean = round(grp_w_mean, decimals)
+        grp_w_unc = round(grp_w_unc, decimals)
+
+        return grp_w_mean, grp_w_unc
+
     def addResultRow(self):
         row_count = self.ratiosTable.rowCount
         self.ratiosTable.insertRow(row_count)
@@ -387,6 +526,11 @@ class SettingsWidget(QWidget):
         self.ratiosTable.scrollToItem(self.ratiosTable.item(row_count, 0))
         self.ratiosTable.setCurrentCell(row_count, 0)
 
+    def removeResultRow(self):
+        last_row = self.ratiosTable.rowCount - 1
+        if last_row > 0:
+            self.ratiosTable.removeRow(last_row)
+            self.ratiosTable.setCurrentCell(last_row - 1, 0)
 
     def exportData(self):
         print('Exporting data...')
@@ -438,6 +582,12 @@ class SettingsWidget(QWidget):
             
             # Export metadata to the template file
             dps_ws.cell(groupCounter, self.dps_col_indices['U-Pb Analytical Technique'], value = self.techniqueComboBox.currentText)
+
+            if self.batchIDComboBox.currentText() == 'Session UUID':
+                dps_ws.cell(groupCounter, 4, value = data.sessionUUID())
+            elif self.batchIDComboBox.currentText() == 'Session file path':
+                dps_ws.cell(groupCounter, 4, value = data.sessionFilePath())
+
             dps_ws.cell(groupCounter, 5, value = data.sessionUUID())
             dps_ws.cell(groupCounter, 6, value = data.sessionFilePath())
             dps_ws.cell(groupCounter, self.dps_col_indices['Analyst'], value = self.userComboBox.currentText)
@@ -455,6 +605,10 @@ class SettingsWidget(QWidget):
                 agegrp_ws.cell(ageGroupCounter, 3, value=group.name)
                 agegrp_ws.cell(ageGroupCounter, 5, value=len(group.selections()))
                 # TODO: Add group age data here, depending on calculations to come...
+                grp_w_mean, grp_w_unc = self.calc_group_6_38_age(group)
+                agegrp_ws.cell(ageGroupCounter, 7, value=grp_w_mean)
+                agegrp_ws.cell(ageGroupCounter, 8, value=grp_w_unc)
+                agegrp_ws.cell(ageGroupCounter, 9, value='2 SE')
 
                 ageGroupCounter += 1
 
@@ -542,13 +696,17 @@ class SettingsWidget(QWidget):
             groupCounter += 1
 
         wb.save(fp)
+
         # Now use the system open the file in Excel
         subprocess.run(['open', export_filepath])
         self.close()
 
-widget = SettingsWidget()
-widget.show()
-loop = QEventLoop()
-widget.destroyed.connect(lambda: loop.quit)
-loop.exec() # wait ...
-print('finished')
+configuration = CONFIG_MANAGER.choose()
+if configuration is not None:
+    config_path, config = configuration
+    widget = SettingsWidget(config_path, config)
+    widget.show()
+    loop = QEventLoop()
+    widget.destroyed.connect(lambda *args: loop.quit())
+    loop.exec() # wait ...
+    print('finished')
