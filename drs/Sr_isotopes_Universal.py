@@ -772,9 +772,17 @@ def runDRS():
 
     try:
         StdSpline_Sr87_86 = data.spline(Sr_rmName, "Sr87_86_Corr").data()
+    except:
+        IoLog.error("The Universal Sr DRS requires Sr isotope Ref Material selections to proceed.")
+        drs.message("DRS did not finish. Please check Messages")
+        drs.progress(100)
+        drs.finished()
+        return
+
+    try:
         StdValue_Sr87_86 = data.referenceMaterialData(Sr_rmName)["87Sr/86Sr"].value()
     except:
-        IoLog.error("The Combined Sr DRS requires Sr isotope Ref Material selections to proceed.")
+        IoLog.error(f"The Universal Sr DRS could not find the \"87Sr/86Sr\" value in the {Sr_rmName} file. Please check that it matches \"87Sr/86Sr\" exactly.")
         drs.message("DRS did not finish. Please check Messages")
         drs.progress(100)
         drs.finished()
