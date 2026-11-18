@@ -583,9 +583,9 @@ class SettingsWidget(QWidget):
             # Export metadata to the template file
             dps_ws.cell(groupCounter, self.dps_col_indices['U-Pb Analytical Technique'], value = self.techniqueComboBox.currentText)
 
-            if self.batchIDComboBox.currentText() == 'Session UUID':
+            if self.batchIDComboBox.currentText == 'Session UUID':
                 dps_ws.cell(groupCounter, 4, value = data.sessionUUID())
-            elif self.batchIDComboBox.currentText() == 'Session file path':
+            elif self.batchIDComboBox.currentText == 'Session file path':
                 dps_ws.cell(groupCounter, 4, value = data.sessionFilePath())
 
             dps_ws.cell(groupCounter, 5, value = data.sessionUUID())
